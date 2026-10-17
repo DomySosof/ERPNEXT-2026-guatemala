@@ -63,6 +63,7 @@ OUTDIR = os.environ.get("EF_OUTDIR") or "/home/frappe/frappe-bench/sites/_estado
 
 # Rellenados en main(); usados por _emit() para el encabezado de cada archivo.
 SUBTITLE = ""
+IDENTITY = {"name": "", "tax_id": "", "currency": ""}
 
 
 # --------------------------------------------------------------------------
@@ -185,47 +186,196 @@ def write_csv(path, columns, rows):
             writer.writerow([fmt_value(row.get(c.get("fieldname")), c) for c in columns])
 
 
-def write_html(path, title, subtitle, columns, rows, note=""):
-    heads = "".join(
-        f"<th>{html.escape(cstr(c.get('label') or c.get('fieldname')))}</th>" for c in columns
-    )
-    body = []
-    for row in rows:
-        cells = []
-        for idx, col in enumerate(columns):
-            value = row.get(col.get("fieldname"))
-            text = fmt_value(value, col)
-            cls = ""
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and flt(value) < 0:
-                cls = ' class="neg"'
-            if idx == 0:
-                cells.append(f"<td{cls}>{html.escape(text)}</td>")
-            else:
-                cells.append(f'<td class="num"{cls}>{html.escape(text)}</td>')
-        body.append("<tr>" + "".join(cells) + "</tr>")
+# --------------------------------------------------------------------------
+# Presentación HTML (diseño compartido por los estados y los libros)
+# --------------------------------------------------------------------------
 
-    doc = f"""<!doctype html>
-<html lang="es"><head><meta charset="utf-8">
-<title>{html.escape(title)}</title>
-<style>
- body {{ font-family: -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; margin:32px; color:#1f272e; }}
- h1 {{ font-size:20px; margin:0 0 4px; }}
- .sub {{ color:#687178; font-size:13px; margin-bottom:18px; }}
- table {{ border-collapse:collapse; width:100%; font-size:13px; }}
- th,td {{ border-bottom:1px solid #e2e8ed; padding:7px 10px; }}
- th {{ background:#f6f8fa; text-align:left; font-weight:600; }}
- td.num {{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }}
- tr:hover td {{ background:#fafbfc; }}
- .neg {{ color:#b4302a; }}
- .note {{ margin-top:18px; color:#687178; font-size:12px; }}
-</style></head><body>
-<h1>{html.escape(title)}</h1>
-<div class="sub">{html.escape(subtitle)}</div>
-<table><thead><tr>{heads}</tr></thead><tbody>{''.join(body)}</tbody></table>
-<div class="note">{html.escape(note)}</div>
-</body></html>"""
+_PAGE_CSS = """
+:root{
+  --ink:#1b2831; --muted:#6a7883; --line:#e3eaf0; --soft:#f6f9fb; --soft2:#eaf1f6;
+  --brand:#0d5c63; --brand2:#149089; --gold:#b3861f; --neg:#b4302a; --pos:#177245;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:#e8eef3;color:var(--ink);
+     font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+     -webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sheet{max-width:1120px;margin:26px auto;background:#fff;border:1px solid var(--line);
+       border-radius:16px;overflow:hidden;box-shadow:0 18px 44px rgba(13,45,60,.10)}
+.masthead{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;
+          padding:22px 32px 20px;position:relative}
+.masthead::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;
+                 background:linear-gradient(90deg,var(--gold),transparent 70%)}
+.masthead .co{font-size:12px;letter-spacing:.16em;text-transform:uppercase;opacity:.88}
+.masthead h1{margin:6px 0 3px;font-size:23px;letter-spacing:.02em;font-weight:650}
+.masthead .period{font-size:12.5px;opacity:.92}
+.content{padding:22px 32px 28px}
+.cards{display:flex;flex-wrap:wrap;gap:12px;margin:0 0 20px}
+.card{flex:1 1 168px;min-width:146px;border:1px solid var(--line);border-radius:12px;
+      padding:12px 14px;background:linear-gradient(180deg,#fff,var(--soft))}
+.card .k{display:block;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.card .v{display:block;font-size:19px;font-weight:650;margin-top:5px;font-variant-numeric:tabular-nums}
+.card.neg .v{color:var(--neg)} .card.pos .v{color:var(--pos)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+thead th{background:var(--soft2);color:#33454f;text-align:left;font-weight:600;
+         padding:9px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
+tbody td{padding:8px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr:nth-child(even) td{background:#fbfdfe}
+tbody tr:hover td{background:#f1f7fa}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.cod{color:#4c5a64}
+tr.total td{font-weight:700;background:#f1f8f5;border-top:2px solid #cfe4de}
+tr.total td:first-child{text-transform:uppercase;letter-spacing:.02em;font-size:12px}
+.neg{color:var(--neg)}
+.note{margin-top:18px;color:var(--muted);font-size:11.5px;border-top:1px solid var(--line);padding-top:10px}
+.badge{display:inline-block;padding:3px 11px;border-radius:999px;font-size:11.5px;
+       font-weight:650;letter-spacing:.04em}
+.badge.ok{background:#e3f4ea;color:var(--pos);border:1px solid #bfe3cd}
+.badge.bad{background:#fbe6e4;color:var(--neg);border:1px solid #f0c6c2}
+.panel{margin-top:22px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.panel > h3{margin:0;padding:10px 15px;background:var(--soft2);font-size:12px;letter-spacing:.08em;
+            text-transform:uppercase;color:#33454f;border-bottom:1px solid var(--line)}
+.panel .body{padding:14px 15px;border-top:1px solid var(--line)}
+.panel .body p{margin:0}
+.asiento{margin:0 0 16px;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+         page-break-inside:avoid}
+.ahead{display:flex;flex-wrap:wrap;gap:5px 18px;align-items:baseline;background:var(--soft);
+       border-bottom:1px solid var(--line);padding:9px 14px;font-size:12.5px;color:#3b4b55}
+.ahead .folio{font-weight:700;color:var(--brand)}
+.ahead .doc{color:var(--muted)}
+.acc{margin:0 0 18px;page-break-inside:avoid}
+.acc h2{font-size:13.5px;margin:0 0 6px;color:var(--brand);letter-spacing:.02em}
+.acc h2 .code{color:var(--muted);font-weight:600;margin-right:6px}
+.acc tfoot td{font-weight:650;background:var(--soft2);border-top:2px solid #cfe4de}
+h2.sec{font-size:14px;margin:24px 0 10px;color:#33454f;letter-spacing:.02em}
+.content ul{margin:0;padding-left:20px}
+.content li{margin:7px 0}
+.muted{color:var(--muted)}
+a{color:var(--brand2)}
+@media print{
+  body{background:#fff}
+  .sheet{margin:0;border:none;border-radius:0;box-shadow:none;max-width:none}
+  thead{display:table-header-group}
+  tr,.asiento,.acc{page-break-inside:avoid}
+}
+"""
+
+
+def _esc(value):
+    return html.escape(cstr(value))
+
+
+def _money(value):
+    return f"{flt(value):,.2f}"
+
+
+def _num_cell(value):
+    """Celda numérica; los saldos negativos se pintan en rojo (clase .neg)."""
+    cls = "num neg" if flt(value) < 0 else "num"
+    return f'<td class="{cls}">{_money(value)}</td>'
+
+
+def _page(title, body, extra_css=""):
+    return (
+        '<!doctype html>\n<html lang="es"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{_esc(title)}</title>"
+        f"<style>{_PAGE_CSS}{extra_css}</style></head><body>"
+        f'<div class="sheet">{body}</div></body></html>'
+    )
+
+
+def _masthead(title, period):
+    name = IDENTITY.get("name") or ""
+    tax = f" · NIT {_esc(IDENTITY['tax_id'])}" if IDENTITY.get("tax_id") else ""
+    lead = f"{_esc(name)}{tax}" if name else "ERPNext · Contabilidad"
+    period_html = f'<div class="period">{_esc(period)}</div>' if period else ""
+    return (
+        '<header class="masthead">'
+        f'<div class="co">{lead}</div>'
+        f"<h1>{_esc(title)}</h1>{period_html}"
+        "</header>"
+    )
+
+
+def _cards_html(cards):
+    items = []
+    for label, value in cards or []:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            text, cls = value, "card"
+        else:
+            number = flt(value)
+            text = _money(number)
+            cls = "card neg" if number < 0 else "card"
+        items.append(
+            f'<div class="{cls}"><span class="k">{_esc(label)}</span>'
+            f'<span class="v">{_esc(text)}</span></div>'
+        )
+    return f'<div class="cards">{"".join(items)}</div>' if items else ""
+
+
+def _badge(ok, ok_text="CUADRA", bad_text="NO CUADRA"):
+    if ok:
+        return f'<span class="badge ok">{_esc(ok_text)}</span>'
+    return f'<span class="badge bad">{_esc(bad_text)}</span>'
+
+
+_TOTAL_PREFIXES = ("total", "grand total", "suma", "utilidad", "pérdida", "perdida", "resultado")
+
+
+def _is_total_row(label, row=None):
+    """¿La fila es un total? (para resaltarla en negrita)."""
+    if row and row.get("is_total_row"):
+        return True
+    low = cstr(label).strip().lower()
+    if not low:
+        return False
+    return (
+        low.startswith(_TOTAL_PREFIXES)
+        or "profit for the year" in low
+        or low.startswith("net ")
+    )
+
+
+def write_html(path, title, subtitle, columns, rows, note="", cards=None):
+    """Escribe un reporte como HTML imprimible con el diseño compartido."""
+    body = _masthead(title, subtitle) + '<div class="content">' + _cards_html(cards)
+
+    if columns:
+        head_cells = []
+        for idx, col in enumerate(columns):
+            label = _esc(col.get("label") or col.get("fieldname"))
+            head_cells.append(f'<th class="num">{label}</th>' if idx else f"<th>{label}</th>")
+        heads = "".join(head_cells)
+        first_field = columns[0].get("fieldname")
+        trs = []
+        for row in rows or []:
+            is_total = _is_total_row(row.get(first_field), row)
+            cells = []
+            for idx, col in enumerate(columns):
+                value = row.get(col.get("fieldname"))
+                text = fmt_value(value, col)
+                cls = []
+                if idx:
+                    cls.append("num")
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and flt(value) < 0:
+                    cls.append("neg")
+                klass = f' class="{" ".join(cls)}"' if cls else ""
+                cells.append(f"<td{klass}>{html.escape(text)}</td>")
+            if is_total:
+                trs.append(f'<tr class="total">{"".join(cells)}</tr>')
+            else:
+                trs.append(f'<tr>{"".join(cells)}</tr>')
+        body += f'<table><thead><tr>{heads}</tr></thead><tbody>{"".join(trs)}</tbody></table>'
+
+    if note:
+        body += f'<div class="note">{_esc(note)}</div>'
+    body += "</div>"
+
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write(doc)
+        handle.write(_page(title, body))
 
 
 def write_xlsx(path, sheets):
@@ -409,31 +559,6 @@ LM_COLUMNS = [
     {"fieldname": "saldo", "label": "Saldo", "fieldtype": "Currency", "width": 130},
 ]
 
-_LIBRO_CSS = """
- body { font-family: -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; margin:28px; color:#1f272e; }
- h1 { font-size:20px; margin:0 0 2px; text-align:center; letter-spacing:.06em; }
- h2 { font-size:15px; margin:16px 0 6px; }
- .ident { text-align:center; font-size:13px; color:#333; line-height:1.5; margin-bottom:14px; }
- .ident b { font-size:15px; }
- .period { text-align:center; font-size:13px; color:#687178; margin-bottom:18px; }
- .asiento { margin:0 0 14px; page-break-inside:avoid; }
- .ahead { display:flex; gap:14px; flex-wrap:wrap; align-items:baseline; background:#f6f8fa;
-          border:1px solid #e2e8ed; border-bottom:none; padding:6px 10px; font-size:12.5px; }
- .ahead .folio { font-weight:700; }
- table { border-collapse:collapse; width:100%; font-size:12.5px; }
- th,td { border:1px solid #e2e8ed; padding:5px 8px; }
- th { background:#fafbfc; text-align:left; font-weight:600; }
- td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
- td.cod { width:110px; color:#4c5560; }
- tfoot td { font-weight:600; background:#fcfdfe; }
- .totales { margin-top:18px; }
- .totales th, .totales td { font-size:13px; }
- .note { margin-top:16px; color:#687178; font-size:11.5px; }
- .acc-head { background:#f2f5f7; font-weight:600; }
- @media print { body { margin:12mm; } .asiento { page-break-inside:avoid; } }
-"""
-
-
 def company_identity(company):
     info = frappe.db.get_value(
         "Company", company, ["company_name", "tax_id", "default_currency"], as_dict=True
@@ -531,63 +656,78 @@ def libro_diario_flat(asientos):
 
 def write_libro_diario_html(path, company, from_date, to_date, asientos):
     ident = company_identity(company)
-    nit = f" · NIT: {html.escape(cstr(ident['tax_id']))}" if ident["tax_id"] else ""
+    period = (
+        f"Del {getdate(from_date).strftime('%d/%m/%Y')} al {getdate(to_date).strftime('%d/%m/%Y')}"
+        f" · {len(asientos)} partidas · moneda {ident['currency']}"
+    )
+
     blocks = []
     total_debe = total_haber = 0.0
     for asiento in asientos:
         lines = "".join(
             "<tr>"
-            f'<td class="cod">{html.escape(cstr(r.account_number))}</td>'
-            f"<td>{html.escape(cstr(r.account_name))}</td>"
-            f"<td>{html.escape(cstr(r.remarks))}</td>"
-            f'<td class="num">{flt(r.debit):,.2f}</td>'
-            f'<td class="num">{flt(r.credit):,.2f}</td>'
+            f'<td class="cod">{_esc(r.account_number)}</td>'
+            f"<td>{_esc(r.account_name)}</td>"
+            f"<td>{_esc(r.remarks)}</td>"
+            f'<td class="num">{_money(r.debit)}</td>'
+            f'<td class="num">{_money(r.credit)}</td>'
             "</tr>"
             for r in asiento["lines"]
         )
-        total_debe += asiento["debe"]
-        total_haber += asiento["haber"]
+        total_debe += flt(asiento["debe"])
+        total_haber += flt(asiento["haber"])
         blocks.append(
-            f"""<div class="asiento">
- <div class="ahead">
-   <span class="folio">Folio {asiento['folio']}</span>
-   <span><b>Asiento No. {asiento['folio']}</b></span>
-   <span>Fecha: {getdate(asiento['fecha']).strftime('%d/%m/%Y')}</span>
-   <span>Documento: {html.escape(cstr(asiento['voucher_type']))} {html.escape(cstr(asiento['voucher_no']))}</span>
- </div>
- <table>
-  <thead><tr><th>Código</th><th>Cuenta</th><th>Descripción</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
-  <tbody>{lines}</tbody>
-  <tfoot><tr><td colspan="3">Sumas iguales</td>
-    <td class="num">{asiento['debe']:,.2f}</td><td class="num">{asiento['haber']:,.2f}</td></tr></tfoot>
- </table>
-</div>"""
+            '<div class="asiento">'
+            '<div class="ahead">'
+            f'<span class="folio">Folio {asiento["folio"]}</span>'
+            f'<span>Asiento No. {asiento["folio"]}</span>'
+            f'<span>Fecha: {getdate(asiento["fecha"]).strftime("%d/%m/%Y")}</span>'
+            f'<span class="doc">Documento: {_esc(asiento["voucher_type"])} {_esc(asiento["voucher_no"])}</span>'
+            "</div>"
+            "<table>"
+            "<thead><tr><th>Código</th><th>Cuenta</th><th>Descripción</th>"
+            '<th class="num">Debe</th><th class="num">Haber</th></tr></thead>'
+            f"<tbody>{lines}</tbody>"
+            '<tfoot><tr><td colspan="3">Sumas iguales</td>'
+            f'<td class="num">{_money(asiento["debe"])}</td>'
+            f'<td class="num">{_money(asiento["haber"])}</td></tr></tfoot>'
+            "</table></div>"
         )
 
-    cuadre = total_debe - total_haber
-    estado = "CUADRA" if abs(cuadre) < 0.01 else "NO CUADRA"
-    doc = f"""<!doctype html>
-<html lang="es"><head><meta charset="utf-8">
-<title>Libro Diario</title>
-<style>{_LIBRO_CSS}</style></head><body>
-<h1>LIBRO DIARIO</h1>
-<div class="ident">
- <b>{html.escape(cstr(ident['name']))}</b>{nit}<br>
- Moneda: {html.escape(cstr(ident['currency']))}
-</div>
-<div class="period">Del {getdate(from_date).strftime('%d/%m/%Y')} al {getdate(to_date).strftime('%d/%m/%Y')}
- · {len(asientos)} partidas</div>
-{''.join(blocks)}
-<table class="totales">
- <thead><tr><th colspan="3">TOTALES DEL PERÍODO</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
- <tbody><tr><td colspan="3">Sumas iguales del libro ({estado})</td>
-   <td class="num">{total_debe:,.2f}</td><td class="num">{total_haber:,.2f}</td></tr></tbody>
-</table>
-<div class="note">Generado automáticamente por scripts/estados_financieros.py ·
- Diferencia Debe - Haber: {cuadre:,.2f}</div>
-</body></html>"""
+    diferencia = total_debe - total_haber
+    cuadra = abs(diferencia) < 0.01
+    resumen = (
+        '<div class="panel"><h3>Totales del período</h3>'
+        "<table><tbody>"
+        f'<tr><td>Total del Debe</td><td class="num">{_money(total_debe)}</td></tr>'
+        f'<tr><td>Total del Haber</td><td class="num">{_money(total_haber)}</td></tr>'
+        f'<tr class="total"><td>Diferencia (Debe − Haber)</td>'
+        f'<td class="num">{_money(diferencia)}</td></tr>'
+        "</tbody></table>"
+        f'<div class="body"><p>Estado del libro: {_badge(cuadra)}</p></div>'
+        "</div>"
+    )
+
+    cards = [
+        ("Partidas", str(len(asientos))),
+        ("Total Debe", total_debe),
+        ("Total Haber", total_haber),
+        ("Diferencia", diferencia),
+    ]
+
+    body = (
+        _masthead("Libro Diario", period)
+        + '<div class="content">'
+        + _cards_html(cards)
+        + "".join(blocks)
+        + resumen
+        + '<div class="note">Generado automáticamente por scripts/estados_financieros.py · '
+        f"Diferencia Debe − Haber: {_money(diferencia)}</div>"
+        + "</div>"
+    )
+
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write(doc)
+        handle.write(_page("Libro Diario", body))
 
 
 # -------------------------------- Libro Mayor -----------------------------
@@ -684,69 +824,106 @@ def libro_mayor_flat(accounts):
 
 def write_libro_mayor_html(path, company, from_date, to_date, accounts):
     ident = company_identity(company)
-    nit = f" · NIT: {html.escape(cstr(ident['tax_id']))}" if ident["tax_id"] else ""
+    period = (
+        f"Del {getdate(from_date).strftime('%d/%m/%Y')} al {getdate(to_date).strftime('%d/%m/%Y')}"
+        f" · {len(accounts)} cuentas · moneda {ident['currency']}"
+    )
+
+    tot_ini = sum(flt(acc["saldo_inicial"]) for acc in accounts)
+    tot_debe = sum(flt(acc["debe"]) for acc in accounts)
+    tot_haber = sum(flt(acc["haber"]) for acc in accounts)
+    tot_fin = sum(flt(acc["saldo_final"]) for acc in accounts)
+    cuadra = abs(tot_debe - tot_haber) < 0.01 and abs(tot_fin) < 0.01
+
+    # ---- Balance de saldos (una fila por cuenta, con su saldo final) ----
+    saldos = "".join(
+        "<tr>"
+        f'<td class="cod">{_esc(acc["account_number"])}</td>'
+        f"<td>{_esc(acc['account_name'])}</td>"
+        + _num_cell(acc["saldo_inicial"])
+        + _num_cell(acc["debe"])
+        + _num_cell(acc["haber"])
+        + _num_cell(acc["saldo_final"])
+        + "</tr>"
+        for acc in accounts
+    )
+    balance = (
+        '<div class="panel"><h3>Balance de saldos</h3>'
+        "<table><thead><tr><th>Código</th><th>Cuenta</th>"
+        '<th class="num">Saldo inicial</th><th class="num">Debe</th>'
+        '<th class="num">Haber</th><th class="num">Saldo final</th></tr></thead>'
+        f"<tbody>{saldos}"
+        '<tr class="total"><td colspan="2">Totales</td>'
+        + _num_cell(tot_ini)
+        + _num_cell(tot_debe)
+        + _num_cell(tot_haber)
+        + _num_cell(tot_fin)
+        + "</tr>"
+        "</tbody></table>"
+        f'<div class="body"><p>Estado del libro: {_badge(cuadra)} '
+        '<span class="muted" style="font-size:12px">'
+        "(el Debe debe igualar al Haber y la suma de los saldos finales debe dar 0.00)"
+        "</span></p></div>"
+        "</div>"
+    )
+
+    # ---- Detalle por cuenta (saldo corriente y saldo final) ----
     blocks = []
-    tot_debe = tot_haber = 0.0
     for acc in accounts:
         rows = [
             "<tr>"
-            '<td colspan="3" class="acc-head">Saldo inicial</td>'
-            f'<td class="num"></td><td class="num"></td>'
-            f'<td class="num">{acc["saldo_inicial"]:,.2f}</td>'
-            "</tr>"
+            '<td colspan="3" class="cod">Saldo inicial</td>'
+            '<td class="num"></td><td class="num"></td>'
+            + _num_cell(acc["saldo_inicial"])
+            + "</tr>"
         ]
         for row in acc["lines"]:
             rows.append(
                 "<tr>"
                 f'<td>{getdate(row.posting_date).strftime("%d/%m/%Y")}</td>'
-                f'<td>{html.escape(cstr(row.voucher_type))} {html.escape(cstr(row.voucher_no))}</td>'
-                f"<td>{html.escape(cstr(row.remarks))}</td>"
-                f'<td class="num">{flt(row.debit):,.2f}</td>'
-                f'<td class="num">{flt(row.credit):,.2f}</td>'
-                f'<td class="num">{flt(row.saldo):,.2f}</td>'
-                "</tr>"
+                f'<td>{_esc(row.voucher_type)} {_esc(row.voucher_no)}</td>'
+                f"<td>{_esc(row.remarks)}</td>"
+                + _num_cell(row.debit)
+                + _num_cell(row.credit)
+                + _num_cell(row.saldo)
+                + "</tr>"
             )
-        tot_debe += acc["debe"]
-        tot_haber += acc["haber"]
-        rows.append(
-            "<tr>"
-            '<td colspan="3" style="font-weight:600">Totales del período</td>'
-            f'<td class="num" style="font-weight:600">{acc["debe"]:,.2f}</td>'
-            f'<td class="num" style="font-weight:600">{acc["haber"]:,.2f}</td>'
-            f'<td class="num" style="font-weight:600">{acc["saldo_final"]:,.2f}</td>'
-            "</tr>"
-        )
         blocks.append(
-            f"""<div class="asiento">
- <h2>{html.escape(cstr(acc['account_number']))} {html.escape(cstr(acc['account_name']))}</h2>
- <table>
-  <thead><tr><th>Fecha</th><th>Documento</th><th>Descripción</th>
-    <th class="num">Debe</th><th class="num">Haber</th><th class="num">Saldo</th></tr></thead>
-  <tbody>{''.join(rows)}</tbody>
- </table>
-</div>"""
+            '<div class="acc">'
+            f'<h2><span class="code">{_esc(acc["account_number"])}</span>{_esc(acc["account_name"])}</h2>'
+            "<table><thead><tr><th>Fecha</th><th>Documento</th><th>Descripción</th>"
+            '<th class="num">Debe</th><th class="num">Haber</th><th class="num">Saldo</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody>'
+            '<tfoot><tr><td colspan="3">Totales del período</td>'
+            + _num_cell(acc["debe"])
+            + _num_cell(acc["haber"])
+            + _num_cell(acc["saldo_final"])
+            + "</tr></tfoot>"
+            "</table></div>"
         )
 
-    doc = f"""<!doctype html>
-<html lang="es"><head><meta charset="utf-8">
-<title>Libro Mayor</title>
-<style>{_LIBRO_CSS}</style></head><body>
-<h1>LIBRO MAYOR</h1>
-<div class="ident"><b>{html.escape(cstr(ident['name']))}</b>{nit}<br>
- Moneda: {html.escape(cstr(ident['currency']))}</div>
-<div class="period">Del {getdate(from_date).strftime('%d/%m/%Y')} al {getdate(to_date).strftime('%d/%m/%Y')}
- · {len(accounts)} cuentas</div>
-{''.join(blocks)}
-<table class="totales">
- <thead><tr><th colspan="3">TOTALES DEL PERÍODO</th><th class="num">Debe</th><th class="num">Haber</th><th class="num"></th></tr></thead>
- <tbody><tr><td colspan="3">Sumas iguales del libro</td>
-  <td class="num">{tot_debe:,.2f}</td><td class="num">{tot_haber:,.2f}</td><td class="num"></td></tr></tbody>
-</table>
-<div class="note">Generado automáticamente por scripts/estados_financieros.py ·
- Diferencia Debe - Haber: {tot_debe - tot_haber:,.2f}</div>
-</body></html>"""
+    cards = [
+        ("Cuentas", str(len(accounts))),
+        ("Total Debe", tot_debe),
+        ("Total Haber", tot_haber),
+        ("Saldo final (Σ)", tot_fin),
+    ]
+
+    body = (
+        _masthead("Libro Mayor", period)
+        + '<div class="content">'
+        + _cards_html(cards)
+        + balance
+        + '<h2 class="sec">Detalle por cuenta</h2>'
+        + "".join(blocks)
+        + '<div class="note">Generado automáticamente por scripts/estados_financieros.py · '
+        f'Diferencia Debe − Haber: {_money(tot_debe - tot_haber)} · '
+        f"Suma de saldos finales: {_money(tot_fin)}</div>"
+        + "</div>"
+    )
+
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write(doc)
+        handle.write(_page("Libro Mayor", body))
 
 
 # --------------------------------------------------------------------------
@@ -754,28 +931,33 @@ def write_libro_mayor_html(path, company, from_date, to_date, accounts):
 # --------------------------------------------------------------------------
 
 
-def _emit(slug, title, columns, rows, note=""):
+def _emit(slug, title, columns, rows, note="", cards=None):
     if not columns:
         print(f"  ! {title}: sin datos/columnas")
         return
     write_csv(os.path.join(OUTDIR, f"{slug}.csv"), columns, rows)
-    write_html(os.path.join(OUTDIR, f"{slug}.html"), title, SUBTITLE, columns, rows, note)
+    write_html(os.path.join(OUTDIR, f"{slug}.html"), title, SUBTITLE, columns, rows, note, cards)
     print(f"  ✔ {title}  ({len(rows)} filas)")
 
 
-def _safe_report(report, filters, slug, title, note=""):
-    """Ejecuta un reporte; si falla, avisa pero no interrumpe el resto."""
+def _safe_report(report, filters, slug, title, note="", cards=None):
+    """Ejecuta un reporte; si falla, avisa pero no interrumpe el resto.
+
+    'cards' puede ser una lista de (etiqueta, valor) o una función que recibe
+    las filas y devuelve esa lista (para las tarjetas de resumen del encabezado).
+    """
     try:
         cols, rows = run_report(report, filters)
     except Exception as exc:  # noqa: BLE001
         print(f"  ! {title}: no se pudo ejecutar '{report}' ({exc})")
         return [], []
-    _emit(slug, title, cols, rows, note)
+    resolved = cards(rows) if callable(cards) else cards
+    _emit(slug, title, cols, rows, note, resolved)
     return cols, rows
 
 
 def main():
-    global SUBTITLE
+    global SUBTITLE, IDENTITY
 
     company = resolve_company()
     fy_doc = resolve_fiscal_year(company, os.environ.get("EF_FISCAL_YEAR"))
@@ -784,6 +966,7 @@ def main():
     to_date = fy_doc.year_end_date
 
     currency = frappe.get_cached_value("Company", company, "default_currency")
+    IDENTITY = company_identity(company)
     SUBTITLE = (
         f"{company} · ejercicio fiscal {fy} · {getdate(from_date)} a {getdate(to_date)}"
         f" · moneda {currency}"
@@ -806,12 +989,25 @@ def main():
         "01-balance-general",
         "Balance General (Estado de Situación Financiera)",
         note,
+        cards=lambda rows: [
+            ("Total activo", _pick_total(rows, "Total Assets", "Total Activo")),
+            ("Total pasivo", _pick_total(rows, "Total Liabilities", "Total Pasivo")),
+            ("Total patrimonio", _pick_total(rows, "Total Equity", "Total Patrimonio")),
+        ],
     )
     if rows:
         sheets.append(("Balance General", cols, rows))
         summary.append(("Total activo", _pick_total(rows, "Total Assets", "Total Activo")))
         summary.append(("Total pasivo", _pick_total(rows, "Total Liabilities", "Total Pasivo")))
         summary.append(("Total patrimonio", _pick_total(rows, "Total Equity", "Total Patrimonio")))
+        summary.append(
+            (
+                "Balance General · Activo − (Pasivo + Patrimonio)",
+                flt(_pick_total(rows, "Total Assets", "Total Activo"))
+                - flt(_pick_total(rows, "Total Liabilities", "Total Pasivo"))
+                - flt(_pick_total(rows, "Total Equity", "Total Patrimonio")),
+            )
+        )
 
     # ---- 2. Estado de Resultados -------------------------------------------
     cols, rows = _safe_report(
@@ -820,6 +1016,14 @@ def main():
         "02-estado-resultados",
         "Estado de Resultados",
         note,
+        cards=lambda rows: [
+            ("Total ingresos", _pick_total(rows, "Total Income", "Total Ingresos")),
+            ("Total gastos", _pick_total(rows, "Total Expense", "Total Gastos")),
+            (
+                "Utilidad / (Pérdida)",
+                _pick_total(rows, "Profit for the year", "Net Profit", "Total", "Utilidad"),
+            ),
+        ],
     )
     if rows:
         sheets.append(("Estado de Resultados", cols, rows))
@@ -874,6 +1078,9 @@ def main():
         "04-flujo-efectivo",
         "Estado de Flujo de Efectivo",
         note,
+        cards=lambda rows: [
+            ("Flujo neto del período", _pick_total(rows, "Net Cash", "Net Cash Flow", "Net Change in Cash")),
+        ],
     )
     if rows:
         sheets.append(("Flujo de Efectivo", cols, rows))
@@ -894,6 +1101,10 @@ def main():
             cols,
             rows,
             note=f"{note} · Cuadre contable del libro (debe ser 0): {flt(control, 2):,.2f}",
+            cards=[
+                ("Resultado del ejercicio", resultado),
+                ("Cuadre contable del libro (debe ser 0)", control),
+            ],
         )
         sheets.append(("Patrimonio Neto", cols, rows))
         summary.append(("Resultado del ejercicio (según mayor)", resultado))
@@ -948,11 +1159,29 @@ def main():
         print(f"  ✔ Libro Mayor  ({len(mayor)} cuentas, {len(lm_rows)} líneas)")
         if lm_rows:
             sheets.append(("Libro Mayor", LM_COLUMNS, lm_rows))
+        lm_debe = sum(flt(a["debe"]) for a in mayor)
+        lm_haber = sum(flt(a["haber"]) for a in mayor)
+        lm_saldo = sum(flt(a["saldo_final"]) for a in mayor)
+        summary.append(("Libro Mayor · total Debe", lm_debe))
+        summary.append(("Libro Mayor · total Haber", lm_haber))
+        summary.append(("Libro Mayor · suma de saldos finales (debe ser 0)", lm_saldo))
     except Exception as exc:  # noqa: BLE001
         print(f"  ! No se pudo construir el Libro Mayor: {exc}")
 
     # ---- índice + xlsx ------------------------------------------------------
     _write_index(SUBTITLE)
+
+    if summary:
+        sheets.append(
+            (
+                "Resumen y cuadre",
+                [
+                    {"fieldname": "concepto", "label": "Concepto", "fieldtype": "Data", "width": 460},
+                    {"fieldname": "valor", "label": "Importe", "fieldtype": "Currency", "width": 170},
+                ],
+                [{"concepto": key, "valor": flt(value)} for key, value in summary if value is not None],
+            )
+        )
     if sheets and write_xlsx(os.path.join(OUTDIR, "estados-financieros.xlsx"), sheets):
         print("  ✔ estados-financieros.xlsx")
 
@@ -1023,22 +1252,23 @@ def _write_index(subtitle):
     def items(pairs):
         return "".join(
             f'<li><a href="{html.escape(h)}">{html.escape(t)}</a> '
-            f'(<a href="{html.escape(h.replace(".html", ".csv"))}">csv</a>)</li>'
+            f'<span class="muted">· <a href="{html.escape(h.replace(".html", ".csv"))}">csv</a></span></li>'
             for h, t in pairs
         )
 
-    doc = f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
-<title>Estados financieros</title>
-<style>body{{font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;margin:32px;color:#1f272e}}
-li{{margin:6px 0}} .sub{{color:#687178;font-size:13px}} h2{{font-size:15px;margin:18px 0 6px}}</style>
-</head><body>
-<h1>Estados financieros y libros contables</h1><div class="sub">{html.escape(subtitle)}</div>
-<h2>Estados financieros</h2><ul>{items(estados)}</ul>
-<h2>Libros contables (Guatemala)</h2><ul>{items(libros)}</ul>
-<p><a href="estados-financieros.xlsx">Descargar todo en Excel (estados-financieros.xlsx)</a></p>
-</body></html>"""
+    body = (
+        _masthead("Estados financieros y libros contables", subtitle)
+        + '<div class="content">'
+        + '<h2 class="sec">Estados financieros</h2>'
+        + f"<ul>{items(estados)}</ul>"
+        + '<h2 class="sec">Libros contables (Guatemala)</h2>'
+        + f"<ul>{items(libros)}</ul>"
+        + '<div class="note"><a href="estados-financieros.xlsx">Descargar todo en Excel '
+        "(estados-financieros.xlsx)</a> · Imprime cualquier reporte con Ctrl+P (→ PDF).</div>"
+        + "</div>"
+    )
     with open(os.path.join(OUTDIR, "index.html"), "w", encoding="utf-8") as handle:
-        handle.write(doc)
+        handle.write(_page("Estados financieros", body))
 
 
 if __name__ == "__main__":

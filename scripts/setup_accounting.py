@@ -21,6 +21,14 @@ Qué hace:
       ERPNext (grupos de artículos, territorios, UOM, tipos de almacén...).
       Sin esto, crear una empresa falla con
       "Could not find Warehouse Type: Transit".
+    - Si ERP_MINIMAL_CHART=1 (por defecto), reduce el plan de cuentas a la
+      "nomenclatura" base de Guatemala: conserva las 7 cuentas raíz numeradas
+      del 1 al 7 (Activos, Pasivos, Patrimonio, Ingresos, Costos, Gastos y
+      Otros Gastos y Productos Financieros) y sus encabezados principales
+      (Activo Corriente, No Corriente, Pasivo Corriente/No Corriente, Capital,
+      Productos, Servicios, Costo de Ventas, ...), y borra el resto de las
+      cientos de subcuentas del catálogo, para que tú armes tu estructura.
+      Sólo se aplica si la empresa todavía no tiene asientos.
     - Corrige el root_type del patrimonio (el catálogo de Guatemala lo trae
       mal: "Patrimonio" viene como Asset en lugar de Equity).
     - Normaliza account_type de cuentas clave y completa los valores por
@@ -33,6 +41,7 @@ Qué hace:
         · Estado de Cambios en el Patrimonio Neto
         · Libro Diario (Guatemala)
         · Libro Mayor (Guatemala)
+        · Balance de Saldos (Guatemala)
     - Verifica que los reportes existan.
 
 Si todavía no existe ninguna empresa, sólo crea la plantilla y los reportes
@@ -47,7 +56,8 @@ Uso (lo hace 'install.sh contabilidad'):
 
 Parámetros por variables de entorno:
     ERP_COMPANY, ERP_COUNTRY, ERP_CURRENCY,
-    ERP_FY_START_MONTH, ERP_FISCAL_YEARS, ERP_PERPETUAL_INVENTORY
+    ERP_FY_START_MONTH, ERP_FISCAL_YEARS, ERP_PERPETUAL_INVENTORY,
+    ERP_MINIMAL_CHART
     (ERP_COMPANY es opcional: si se deja vacío se usa la única empresa del sitio)
 """
 
@@ -100,6 +110,9 @@ CFG = {
         "false",
         "False",
     ),
+    # Reducir el plan de cuentas a la nomenclatura base de Guatemala.
+    "minimal_chart": (os.environ.get("ERP_MINIMAL_CHART") or "1").strip().lower()
+    not in ("", "0", "no", "false", "off"),
     "fiscal_years": [
         y.strip()
         for y in (os.environ.get("ERP_FISCAL_YEARS") or str(date.today().year)).split(",")
@@ -111,6 +124,7 @@ ECPN_TEMPLATE_NAME = "Estado de Cambios en el Patrimonio Neto (NIC 1)"
 EQUITY_REPORT_NAME = "Estado de Cambios en el Patrimonio Neto"
 LIBRO_DIARIO_REPORT_NAME = "Libro Diario (Guatemala)"
 LIBRO_MAYOR_REPORT_NAME = "Libro Mayor (Guatemala)"
+BALANCE_SALDOS_REPORT_NAME = "Balance de Saldos (Guatemala)"
 
 FINANCIAL_REPORTS = [
     ("Balance Sheet", "Balance General / Estado de Situación Financiera"),
@@ -121,6 +135,7 @@ FINANCIAL_REPORTS = [
     (EQUITY_REPORT_NAME, "ECPN (reporte dedicado)"),
     (LIBRO_DIARIO_REPORT_NAME, "Libro Diario (Guatemala)"),
     (LIBRO_MAYOR_REPORT_NAME, "Libro Mayor (Guatemala)"),
+    (BALANCE_SALDOS_REPORT_NAME, "Balance de Saldos (Guatemala)"),
 ]
 
 LOG = []
@@ -406,6 +421,308 @@ def fix_equity_root_type(company):
         log("  · Árbol de patrimonio ya correcto")
 
     return fixed
+
+
+# --------------------------------------------------------------------------
+# 2b. Plan de cuentas mínimo: la nomenclatura base de Guatemala
+# --------------------------------------------------------------------------
+# El asistente de ERPNext importa el catálogo completo "Guatemala - Cuentas"
+# (cientos de cuentas). Con ERP_MINIMAL_CHART=1 lo reducimos a la
+# "nomenclatura" base: las 7 raíces numeradas del 1 al 7 + sus encabezados
+# principales, para que los estados conserven su estructura sin arrastrar el
+# resto de subcuentas.
+#
+# Es seguro: sólo se ejecuta si la empresa todavía NO tiene asientos
+# (GL Entry). Si ya tiene movimientos, no se toca nada.
+
+# Cuentas raíz: número, nombre y naturaleza contable.
+MINIMAL_CHART_TITLES = [
+    ("1", "Activos", "Asset"),
+    ("2", "Pasivos", "Liability"),
+    ("3", "Patrimonio", "Equity"),
+    ("4", "Ingresos", "Income"),
+    ("5", "Costos", "Expense"),
+    ("6", "Gastos", "Expense"),
+    ("7", "Otros Gastos y Productos Financieros", "Expense"),
+]
+
+# Encabezados/cuentas que se conservan ADEMÁS de las raíces. Es la nomenclatura
+# con la que quedan armados el Balance General y el Estado de Resultados.
+# Formato: (cuenta padre, nombre, es_grupo, account_type).
+#
+# Sólo se conserva una cuenta si TODOS sus ancestros también se conservan (así,
+# por ejemplo, la "Merma o Ajuste de Inventario" que cuelga de Inventario se
+# borra, y se mantiene la que cuelga directo de Costos). Si alguna faltara (p.
+# ej. si antes se podó a sólo las raíces), se vuelve a crear. Para agregar o
+# quitar encabezados, edita esta lista.
+MINIMAL_CHART_HEADERS = [
+    # Activos
+    ("Activos", "Activo Corriente", True, None),
+    ("Activos", "No Corriente", True, None),
+    # Pasivos
+    ("Pasivos", "Pasivo Corriente", True, None),
+    ("Pasivos", "Pasivo No Corriente", True, None),
+    # Patrimonio
+    ("Patrimonio", "Capital", False, None),
+    ("Patrimonio", "Resultados del Ejercicio", False, None),
+    ("Patrimonio", "Utilidades Retenidas", False, None),
+    # Ingresos
+    ("Ingresos", "Productos", False, None),
+    ("Ingresos", "Servicios", False, None),
+    # Costos
+    ("Costos", "Costo de Ventas", False, "Cost of Goods Sold"),
+    ("Costos", "Costos Incluidos en la Valuación", False, "Expenses Included In Valuation"),
+    ("Costos", "Merma o Ajuste de Inventario", False, "Stock Adjustment"),
+    # Otros gastos y productos financieros
+    ("Otros Gastos y Productos Financieros", "Otros Gastos", True, None),
+    ("Otros Gastos y Productos Financieros", "Otros Ingresos", True, None),
+]
+
+# Campos de la empresa que apuntan a una cuenta. Hay que vaciarlos antes de
+# borrar el catálogo; si no, quedarían apuntando a cuentas inexistentes.
+_COMPANY_ACCOUNT_DEFAULTS = [
+    "default_bank_account",
+    "default_cash_account",
+    "default_receivable_account",
+    "default_payable_account",
+    "default_expense_account",
+    "default_income_account",
+    "default_inventory_account",
+    "stock_received_but_not_billed",
+    "stock_adjustment_account",
+    "write_off_account",
+    "default_discount_account",
+    "unrealized_profit_loss_account",
+    "exchange_gain_loss_account",
+    "unrealized_exchange_gain_loss_account",
+    "round_off_account",
+    "default_deferred_revenue_account",
+    "default_deferred_expense_account",
+    "accumulated_depreciation_account",
+    "depreciation_expense_account",
+    "disposal_account",
+]
+
+# Otras tablas que apuntan a cuentas y podrían quedar "colgadas".
+_ACCOUNT_REFERENCE_SWEEP = [
+    ("Warehouse", "account"),
+    ("Mode of Payment Account", "default_account"),
+    ("Item Default", "expense_account"),
+    ("Item Default", "income_account"),
+    ("Item Default", "deferred_expense_account"),
+    ("Item Default", "deferred_revenue_account"),
+]
+
+
+def _table_has_column(doctype, column):
+    """¿Existe la columna en la base de datos? (vía information_schema)."""
+    try:
+        return bool(
+            frappe.db.sql(
+                """select 1 from information_schema.columns
+                   where table_schema = database()
+                     and table_name = %s and column_name = %s""",
+                (f"tab{doctype}", column),
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _clear_account_references(company, keep_names):
+    """Vacía todo lo que apunte a las cuentas que vamos a borrar."""
+    keep = tuple(keep_names) or ("",)
+
+    valid = {field.fieldname for field in frappe.get_meta("Company").fields}
+    fields = [field for field in _COMPANY_ACCOUNT_DEFAULTS if field in valid]
+    current = frappe.db.get_value("Company", company, fields, as_dict=True) if fields else None
+
+    cleared = 0
+    for field, value in (current or {}).items():
+        if value and value not in keep:
+            frappe.db.set_value("Company", company, field, None, update_modified=False)
+            cleared += 1
+
+    for doctype, column in _ACCOUNT_REFERENCE_SWEEP:
+        if not _table_has_column(doctype, column):
+            continue
+        company_filter = " and company=%(company)s" if _table_has_column(doctype, "company") else ""
+        try:
+            frappe.db.sql(
+                f"update `tab{doctype}` set `{column}`=null "
+                f"where `{column}` is not null and `{column}` not in %(keep)s{company_filter}",
+                {"keep": keep, "company": company},
+            )
+        except Exception as exc:  # noqa: BLE001
+            warn(f"No se pudo limpiar {doctype}.{column}: {exc}")
+
+    if cleared:
+        log(f"  · Valores por defecto de cuenta liberados ({cleared} campos)")
+    return cleared
+
+
+def _report_type_for(root_type):
+    return "Balance Sheet" if root_type in ("Asset", "Liability", "Equity") else "Profit and Loss"
+
+
+def _ensure_title_roots(company):
+    """Crea/normaliza los 7 títulos principales. Devuelve cuántos creó."""
+    currency = frappe.get_cached_value("Company", company, "default_currency")
+    created = 0
+
+    for number, name, root_type in MINIMAL_CHART_TITLES:
+        existing = frappe.db.get_value("Account", {"company": company, "account_name": name}, "name")
+        if existing:
+            for field, value in (
+                ("account_number", number),
+                ("is_group", 1),
+                ("root_type", root_type),
+                ("report_type", _report_type_for(root_type)),
+                ("disabled", 0),
+            ):
+                frappe.db.set_value("Account", existing, field, value, update_modified=False)
+            continue
+
+        doc = frappe.new_doc("Account")
+        doc.account_name = name
+        doc.company = company
+        doc.account_number = number
+        doc.is_group = 1
+        doc.root_type = root_type
+        doc.report_type = _report_type_for(root_type)
+        doc.account_currency = currency
+        doc.flags.ignore_permissions = True
+        doc.insert()
+        created += 1
+        log(f"  + Título creado: {number} · {name}")
+
+    frappe.db.commit()
+    return created
+
+
+def _minimal_chart_keep_names():
+    """Nombres (en minúsculas) que se conservan: raíces y encabezados."""
+    roots = {name.strip().lower() for _, name, _ in MINIMAL_CHART_TITLES}
+    headers = {header[1].strip().lower() for header in MINIMAL_CHART_HEADERS}
+    return roots, roots | headers
+
+
+def _minimal_chart_ids(company):
+    """Los 'name' de las cuentas que se conservan (raíces + encabezados).
+
+    Un encabezado sólo se conserva si TODOS sus ancestros también se conservan;
+    por eso se recorre el árbol en orden (lft) y se exige que el padre esté en
+    el conjunto.
+    """
+    roots, allowed = _minimal_chart_keep_names()
+    rows = frappe.db.get_all(
+        "Account",
+        filters={"company": company},
+        fields=["name", "account_name", "parent_account"],
+        order_by="lft asc",
+        limit_page_length=0,
+    )
+    kept = set()
+    for row in rows:
+        account_name = (row.account_name or "").strip().lower()
+        if not row.parent_account:
+            if account_name in roots:
+                kept.add(row.name)
+        elif row.parent_account in kept and account_name in allowed:
+            kept.add(row.name)
+    return kept
+
+
+def _ensure_minimal_headers(company):
+    """Crea los encabezados que falten (p. ej. si antes se podó a sólo las raíces)."""
+    currency = frappe.get_cached_value("Company", company, "default_currency")
+    created = 0
+
+    for parent_name, name, is_group, account_type in MINIMAL_CHART_HEADERS:
+        parent = frappe.db.get_value(
+            "Account", {"company": company, "account_name": parent_name}, "name"
+        )
+        if not parent:
+            warn(f"No encontré la cuenta padre '{parent_name}' para crear '{name}'")
+            continue
+        exists = frappe.db.get_value(
+            "Account",
+            {"company": company, "account_name": name, "parent_account": parent},
+            "name",
+        )
+        if exists:
+            continue
+
+        doc = frappe.new_doc("Account")
+        doc.account_name = name
+        doc.company = company
+        doc.parent_account = parent
+        doc.is_group = 1 if is_group else 0
+        doc.root_type = frappe.db.get_value("Account", parent, "root_type") or "Asset"
+        doc.account_type = account_type or ""
+        doc.account_currency = currency
+        doc.flags.ignore_permissions = True
+        doc.insert()
+        created += 1
+        log(f"  + Cuenta creada: {parent_name} › {name}")
+
+    if created:
+        frappe.db.commit()
+    return created
+
+
+def prune_chart_to_titles(company):
+    """Reduce el plan de cuentas a la nomenclatura base de Guatemala."""
+    from frappe.utils.nestedset import rebuild_tree
+
+    total = frappe.db.count("Account", {"company": company})
+    kept = _minimal_chart_ids(company)
+
+    if len(kept) >= total:
+        _ensure_title_roots(company)
+        added = _ensure_minimal_headers(company)
+        rebuild_tree("Account")
+        frappe.clear_cache()
+        frappe.db.commit()
+        after = frappe.db.count("Account", {"company": company})
+        extra = f", {added} encabezados creados" if added else ""
+        log(f"  · Plan de cuentas: nomenclatura base ({after} cuentas{extra})")
+        return 0
+
+    if frappe.db.count("GL Entry", {"company": company}):
+        warn(
+            "El plan de cuentas se deja como está: la empresa ya tiene asientos "
+            "registrados (GL Entry). Para reducirlo hay que hacerlo antes de "
+            "registrar movimientos."
+        )
+        return 0
+
+    keep = sorted(kept)
+    _clear_account_references(company, keep)
+    frappe.db.commit()
+
+    before = frappe.db.count("Account", {"company": company})
+    try:
+        # Borrado directo (sin hooks) y luego se reconstruye el árbol (lft/rgt):
+        # mucho más rápido y sin la validación de "grupo con hijos" de ERPNext.
+        frappe.db.delete("Account", {"company": company, "name": ("not in", tuple(keep) or ("",))})
+    except Exception as exc:  # noqa: BLE001
+        warn(f"No se pudieron borrar las cuentas del catálogo: {exc}")
+
+    created_roots = _ensure_title_roots(company)
+    created_headers = _ensure_minimal_headers(company)
+    rebuild_tree("Account")
+    frappe.clear_cache()
+    frappe.db.commit()
+
+    after = frappe.db.count("Account", {"company": company})
+    deleted = max(before - len(keep), 0)
+    extra = f", {created_roots + created_headers} creadas" if (created_roots or created_headers) else ""
+    log(
+        f"  · Plan de cuentas reducido a la nomenclatura base "
+        f"({after} cuentas = 7 raíces + encabezados; {deleted} eliminadas{extra})"
+    )
+    return deleted
 
 
 # --------------------------------------------------------------------------
@@ -882,9 +1199,15 @@ def equity_report_filters(company):
 # --- Libro Diario (Guatemala) ---------------------------------------------
 # Registro cronológico de las partidas: cada asiento lleva su folio, la fecha,
 # el documento de origen y sus cuentas al Debe y al Haber.
+#
+# Para que se vea «como un libro» (y no como una simple lista), la consulta
+# agrega dos clases de filas calculadas:
+#   · «Sumas iguales asiento N»: el subtotal Debe = Haber de cada asiento.
+#   · «TOTAL DEL PERIODO»: la suma de todas las partidas del rango de fechas.
+# Por eso add_total_row va en 0: el total lo pone el SQL, no ERPNext.
 
 LIBRO_DIARIO_COLUMNS = [
-    {"fieldname": "folio", "label": "Folio", "fieldtype": "Int", "width": 70},
+    {"fieldname": "folio", "label": "Folio", "fieldtype": "Data", "width": 70},
     {"fieldname": "fecha", "label": "Fecha", "fieldtype": "Date", "width": 100},
     {"fieldname": "documento", "label": "Documento", "fieldtype": "Data", "width": 200},
     {"fieldname": "codigo", "label": "Código", "fieldtype": "Data", "width": 110},
@@ -895,19 +1218,14 @@ LIBRO_DIARIO_COLUMNS = [
 ]
 
 LIBRO_DIARIO_QUERY = """
-select t.folio, t.fecha, t.documento, t.codigo, t.cuenta, t.descripcion, t.debe, t.haber
-from (
+with base as (
     select
-        dense_rank() over (
-            order by s.posting_date, s.voucher_creation, s.voucher_type, s.voucher_no
-        ) as folio,
         s.posting_date,
         s.voucher_creation,
         s.voucher_type,
         s.voucher_no,
         s.line_creation,
         s.line_name,
-        s.posting_date as fecha,
         s.documento,
         s.codigo,
         s.cuenta,
@@ -936,14 +1254,81 @@ from (
           and ifnull(g.is_cancelled, 0) = 0
           and g.posting_date between %(from_date)s and %(to_date)s
     ) s
-) t
-order by t.posting_date, t.voucher_creation, t.voucher_type, t.voucher_no,
-         t.line_creation, t.line_name
+),
+detalle as (
+    select
+        dense_rank() over (
+            order by posting_date, voucher_creation, voucher_type, voucher_no
+        ) as folio,
+        concat(posting_date, '|', voucher_creation, '|', voucher_type, '|', voucher_no) as orden,
+        posting_date,
+        line_creation,
+        documento,
+        codigo,
+        cuenta,
+        descripcion,
+        debe,
+        haber
+    from base
+)
+select folio, fecha, documento, codigo, cuenta, descripcion, debe, haber,
+       orden, bloque, orden_linea
+from (
+    select
+        folio, orden, 0 as bloque,
+        posting_date as fecha, documento, codigo, cuenta, descripcion, debe, haber,
+        line_creation as orden_linea
+    from detalle
+    union all
+    select
+        folio, orden, 1 as bloque,
+        cast(null as date), documento, '',
+        concat('Sumas iguales asiento ', folio),
+        'Sumas iguales del asiento (Deber = Haber)',
+        sum(debe), sum(haber),
+        cast(null as datetime)
+    from detalle
+    group by folio, orden, documento
+    union all
+    select
+        0, 'zzzz', 2 as bloque,
+        cast(null as date), '', '', 'TOTAL DEL PERIODO',
+        'Total de todas las partidas del periodo',
+        sum(debe), sum(haber),
+        cast(null as datetime)
+    from detalle
+) filas
+order by orden, bloque, orden_linea
+"""
+
+# JS del reporte (se guarda en el campo 'javascript'): pone en negrita las filas
+# de subtotal por asiento y la del total general para que la suma resalte.
+LIBRO_DIARIO_JS = """
+frappe.query_reports["Libro Diario (Guatemala)"] = {
+	formatter: function (value, row, column, data, format_cell) {
+		var html = format_cell(value, row, column, data);
+		var cuenta = (row && row.cuenta ? row.cuenta : "") + "";
+		var desc = (row && row.descripcion ? row.descripcion : "") + "";
+		var fuerte =
+			cuenta.indexOf("Sumas iguales") === 0 ||
+			cuenta.indexOf("TOTAL") === 0 ||
+			desc.indexOf("Suma del") === 0;
+		return fuerte ? '<span style="font-weight:700">' + html + '</span>' : html;
+	},
+};
 """
 
 
 # --- Libro Mayor (Guatemala) ----------------------------------------------
 # Traslado de las partidas a cada cuenta, con el saldo corriente del período.
+#
+# Por cada cuenta se agregan tres filas que permiten revisar el libro sin
+# calculadora:
+#   · «Saldo inicial»: lo que traía la cuenta antes del rango de fechas.
+#   · una fila por movimiento, con el Saldo corrido.
+#   · «Suma del período»: el total Debe, el total Haber y el Saldo final.
+# Al cierre, «TOTAL GENERAL» suma los saldos finales (debe dar 0.00 si cuadra).
+# Por eso add_total_row va en 0: los totales los pone el SQL.
 
 LIBRO_MAYOR_COLUMNS = [
     {"fieldname": "codigo", "label": "Código", "fieldtype": "Data", "width": 110},
@@ -953,35 +1338,166 @@ LIBRO_MAYOR_COLUMNS = [
     {"fieldname": "descripcion", "label": "Descripción", "fieldtype": "Data", "width": 300},
     {"fieldname": "debe", "label": "Debe", "fieldtype": "Currency", "width": 130},
     {"fieldname": "haber", "label": "Haber", "fieldtype": "Currency", "width": 130},
-    {"fieldname": "saldo", "label": "Saldo del período", "fieldtype": "Currency", "width": 150},
+    {"fieldname": "saldo", "label": "Saldo", "fieldtype": "Currency", "width": 150},
 ]
 
 LIBRO_MAYOR_QUERY = """
-select t.codigo, t.cuenta, t.fecha, t.documento, t.descripcion, t.debe, t.haber, t.saldo
-from (
+with base as (
     select
         g.account as cuenta_id,
         ifnull(a.account_number, '') as codigo,
         ifnull(a.account_name, g.account) as cuenta,
-        g.posting_date as fecha,
+        g.posting_date,
         g.creation as orden_creacion,
         g.name as orden_nombre,
         concat(g.voucher_type, ' ', g.voucher_no) as documento,
         ifnull(g.remarks, '') as descripcion,
         g.debit as debe,
-        g.credit as haber,
-        sum(g.debit - g.credit) over (
-            partition by g.account
-            order by g.posting_date, g.creation, g.name
-            rows between unbounded preceding and current row
-        ) as saldo
+        g.credit as haber
     from `tabGL Entry` g
     left join `tabAccount` a on a.name = g.account
     where g.company = %(company)s
       and ifnull(g.is_cancelled, 0) = 0
       and g.posting_date between %(from_date)s and %(to_date)s
+),
+opening as (
+    select
+        g.account as cuenta_id,
+        sum(g.debit - g.credit) as saldo_inicial
+    from `tabGL Entry` g
+    where g.company = %(company)s
+      and ifnull(g.is_cancelled, 0) = 0
+      and g.posting_date < %(from_date)s
+    group by g.account
+),
+mov as (
+    select
+        b.cuenta_id,
+        b.codigo,
+        b.cuenta,
+        b.posting_date,
+        b.orden_creacion,
+        b.orden_nombre,
+        b.documento,
+        b.descripcion,
+        b.debe,
+        b.haber,
+        sum(b.debe - b.haber) over (
+            partition by b.cuenta_id
+            order by b.posting_date, b.orden_creacion, b.orden_nombre
+            rows between unbounded preceding and current row
+        ) as saldo
+    from base b
+),
+cuentas as (
+    select t.cuenta_id, t.codigo, t.cuenta,
+           ifnull(o.saldo_inicial, 0) as saldo_inicial
+    from (
+        select distinct cuenta_id, codigo, cuenta from base
+        union
+        select
+            o.cuenta_id,
+            ifnull(a.account_number, '') as codigo,
+            ifnull(a.account_name, o.cuenta_id) as cuenta
+        from opening o
+        left join `tabAccount` a on a.name = o.cuenta_id
+    ) t
+    left join opening o on o.cuenta_id = t.cuenta_id
+)
+select codigo, cuenta, fecha, documento, descripcion, debe, haber, saldo,
+       orden_cuenta, bloque, orden_linea
+from (
+    select
+        c.codigo, c.cuenta, cast(null as date) as fecha, '' as documento,
+        'Saldo inicial' as descripcion,
+        cast(null as decimal(21,6)) as debe, cast(null as decimal(21,6)) as haber,
+        c.saldo_inicial as saldo,
+        c.codigo as orden_cuenta, 0 as bloque, '' as orden_linea
+    from cuentas c
+    union all
+    select
+        m.codigo, m.cuenta, m.posting_date, m.documento, m.descripcion,
+        m.debe, m.haber, m.saldo,
+        m.codigo, 1, concat(m.posting_date, '|', m.orden_creacion, '|', m.orden_nombre)
+    from mov m
+    union all
+    select
+        c.codigo, c.cuenta, cast(null as date), '', 'Suma del periodo',
+        ifnull(sum(m.debe), 0), ifnull(sum(m.haber), 0),
+        c.saldo_inicial + ifnull(sum(m.debe - m.haber), 0),
+        c.codigo, 2, ''
+    from cuentas c
+    left join mov m on m.cuenta_id = c.cuenta_id
+    group by c.cuenta_id, c.codigo, c.cuenta, c.saldo_inicial
+    union all
+    select
+        '', 'TOTAL GENERAL', cast(null as date), '', 'Suma de los saldos finales',
+        ifnull((select sum(debe) from mov), 0),
+        ifnull((select sum(haber) from mov), 0),
+        ifnull((select sum(saldo_inicial) from cuentas), 0)
+            + ifnull((select sum(debe - haber) from mov), 0),
+        'zzzz', 3, ''
 ) t
-order by t.codigo, t.cuenta, t.cuenta_id, t.fecha, t.orden_creacion, t.orden_nombre
+order by orden_cuenta, bloque, orden_linea
+"""
+
+# JS del reporte: resalta el saldo inicial, la suma por cuenta y el total general.
+LIBRO_MAYOR_JS = """
+frappe.query_reports["Libro Mayor (Guatemala)"] = {
+	formatter: function (value, row, column, data, format_cell) {
+		var html = format_cell(value, row, column, data);
+		var cuenta = (row && row.cuenta ? row.cuenta : "") + "";
+		var desc = (row && row.descripcion ? row.descripcion : "") + "";
+		var fuerte =
+			desc === "Saldo inicial" ||
+			desc.indexOf("Suma del") === 0 ||
+			cuenta.indexOf("TOTAL") === 0;
+		return fuerte ? '<span style="font-weight:700">' + html + '</span>' : html;
+	},
+};
+"""
+
+
+# --- Balance de Saldos (Guatemala) ----------------------------------------
+# Una fila por cuenta (hoja) con su saldo inicial, los movimientos del período
+# y el SALDO FINAL. Es la vista que permite comprobar de un vistazo que el libro
+# cuadra: los totales de Debe y Haber deben ser iguales y la suma de los saldos
+# finales (débito positivo) debe dar 0.00.
+
+BALANCE_SALDOS_COLUMNS = [
+    {"fieldname": "codigo", "label": "Código", "fieldtype": "Data", "width": 110},
+    {"fieldname": "cuenta", "label": "Cuenta", "fieldtype": "Data", "width": 300},
+    {"fieldname": "saldo_inicial", "label": "Saldo inicial", "fieldtype": "Currency", "width": 150},
+    {"fieldname": "debe", "label": "Debe del período", "fieldtype": "Currency", "width": 150},
+    {"fieldname": "haber", "label": "Haber del período", "fieldtype": "Currency", "width": 150},
+    {"fieldname": "saldo_final", "label": "Saldo final", "fieldtype": "Currency", "width": 150},
+]
+
+BALANCE_SALDOS_QUERY = """
+select t.codigo, t.cuenta, t.saldo_inicial, t.debe, t.haber, t.saldo_final
+from (
+    select
+        ifnull(a.account_number, '') as codigo,
+        ifnull(a.account_name, g.account) as cuenta,
+        sum(case when g.posting_date < %(from_date)s
+                 then g.debit - g.credit else 0 end) as saldo_inicial,
+        sum(case when g.posting_date between %(from_date)s and %(to_date)s
+                 then g.debit else 0 end) as debe,
+        sum(case when g.posting_date between %(from_date)s and %(to_date)s
+                 then g.credit else 0 end) as haber,
+        sum(case when g.posting_date <= %(to_date)s
+                 then g.debit - g.credit else 0 end) as saldo_final
+    from `tabGL Entry` g
+    inner join `tabAccount` a on a.name = g.account
+    where g.company = %(company)s
+      and ifnull(g.is_cancelled, 0) = 0
+      and g.posting_date <= %(to_date)s
+      and a.is_group = 0
+      and ifnull(a.disabled, 0) = 0
+    group by a.name, a.account_number, a.account_name
+    having saldo_inicial <> 0 or debe <> 0 or haber <> 0 or saldo_final <> 0
+) t
+order by t.codigo, t.cuenta
 """
 
 
@@ -990,8 +1506,12 @@ def libro_report_filters(company):
     return equity_report_filters(company)
 
 
-def ensure_query_report(name, query, columns, filters, add_total_row=1):
-    """Crea o actualiza un Query Report (sólo SQL, se guarda en base de datos)."""
+def ensure_query_report(name, query, columns, filters, add_total_row=1, javascript=None):
+    """Crea o actualiza un Query Report (sólo SQL, se guarda en base de datos).
+
+    ``javascript`` se guarda en el campo *javascript* del doctype Report y se
+    ejecuta en el navegador; sirve, por ejemplo, para dar formato a las filas.
+    """
     payload = {
         "ref_doctype": "GL Entry",
         "report_type": "Query Report",
@@ -999,6 +1519,7 @@ def ensure_query_report(name, query, columns, filters, add_total_row=1):
         "add_total_row": add_total_row,
         "disabled": 0,
         "query": query,
+        "javascript": javascript or "",
     }
 
     def _fill(doc):
@@ -1042,22 +1563,38 @@ def ensure_equity_report(company):
 
 
 def ensure_libro_diario_report(company):
-    # 'add_total_row' se omite: la primera columna es el folio (no tiene sentido sumarla).
+    # El SQL ya agrega las «sumas iguales» de cada asiento y el total del
+    # período, así que ERPNext no debe añadir otra fila de totales.
     return ensure_query_report(
         LIBRO_DIARIO_REPORT_NAME,
         LIBRO_DIARIO_QUERY,
         LIBRO_DIARIO_COLUMNS,
         libro_report_filters(company),
         add_total_row=0,
+        javascript=LIBRO_DIARIO_JS,
+    )
+
+
+def ensure_balance_saldos_report(company):
+    # Totales de Debe, Haber y Saldo final (debe dar 0.00 si el libro cuadra).
+    return ensure_query_report(
+        BALANCE_SALDOS_REPORT_NAME,
+        BALANCE_SALDOS_QUERY,
+        BALANCE_SALDOS_COLUMNS,
+        libro_report_filters(company),
+        add_total_row=1,
     )
 
 
 def ensure_libro_mayor_report(company):
+    # El SQL agrega el saldo inicial, la suma por cuenta y el total general.
     return ensure_query_report(
         LIBRO_MAYOR_REPORT_NAME,
         LIBRO_MAYOR_QUERY,
         LIBRO_MAYOR_COLUMNS,
         libro_report_filters(company),
+        add_total_row=0,
+        javascript=LIBRO_MAYOR_JS,
     )
 
 
@@ -1066,6 +1603,7 @@ DEDICATED_REPORTS = [
     (EQUITY_REPORT_NAME, ensure_equity_report),
     (LIBRO_DIARIO_REPORT_NAME, ensure_libro_diario_report),
     (LIBRO_MAYOR_REPORT_NAME, ensure_libro_mayor_report),
+    (BALANCE_SALDOS_REPORT_NAME, ensure_balance_saldos_report),
 ]
 
 
@@ -1295,6 +1833,14 @@ def main():
     print("=" * 78)
     log(f"Sitio: {frappe.local.site}")
     log(f"País: {CFG['country']} · Moneda: {CFG['currency']}")
+    log(
+        "Plan de cuentas: "
+        + (
+            "nomenclatura base de Guatemala (raíces 1 a 7 + encabezados)"
+            if CFG["minimal_chart"]
+            else "catálogo completo de Guatemala"
+        )
+    )
 
     company = find_company()
     if company:
@@ -1304,8 +1850,11 @@ def main():
 
     if company:
         fix_equity_root_type(company)
-        ensure_helper_accounts(company)
-        assign_account_categories(company)
+        if CFG["minimal_chart"]:
+            prune_chart_to_titles(company)
+        else:
+            ensure_helper_accounts(company)
+            assign_account_categories(company)
         set_company_defaults(company)
         ensure_fiscal_years(company)
     else:
