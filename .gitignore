@@ -1,0 +1,17 @@
+# --- Archivos locales (generados en tu máquina; no son parte del proyecto) ---
+.env
+salidas/
+respaldos/
+*.tmp
+.DS_Store
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# --- Editores ---
+.idea/
+.vscode/
+*.swp
