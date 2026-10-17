@@ -8,12 +8,21 @@ En tu máquina **no se instala nada** (ni Python, ni Node, ni MariaDB, ni `bench
 todo vive en contenedores y volúmenes Docker. El sitio queda **limpio, sin
 empresas ni datos de prueba**: la empresa la creas tú con el asistente web.
 
-```
+> **No necesitas saber de programación.** Es copiar y pegar 3 comandos en una
+> terminal. La **primera vez tarda 10–20 minutos** (descarga las imágenes); las
+> siguientes arranca en segundos. Nada de lo que hagas aquí borra tus datos.
+
+### Instalación en 4 pasos
+
+```bash
 ./install.sh                 # 1) deja ERPNext funcionando (sitio limpio)
 # 2) creas TU empresa en el navegador (asistente de ERPNext)
 ./install.sh contabilidad    # 3) prepara la contabilidad guatemalteca
-./install.sh reports         # 4) genera los estados y libros en ./salidas/
+./install.sh reports         # 4) (opcional) estados y libros en ./salidas/
 ```
+
+¿Es tu primera vez con Docker o con la terminal? Ve directo a la
+**[instalación paso a paso](#3-instalación-paso-a-paso)**.
 
 ---
 
@@ -21,7 +30,7 @@ empresas ni datos de prueba**: la empresa la creas tú con el asistente web.
 
 1. [Qué incluye](#1-qué-incluye)
 2. [Requisitos](#2-requisitos)
-3. [Instalación rápida](#3-instalación-rápida)
+3. [Instalación paso a paso](#3-instalación-paso-a-paso)
 4. [Crear tu empresa con el asistente](#4-crear-tu-empresa-con-el-asistente)
 5. [Qué hace `./install.sh contabilidad`](#5-qué-hace-installsh-contabilidad)
 6. [Libro Diario y Libro Mayor (formato Guatemala)](#6-libro-diario-y-libro-mayor-formato-guatemala)
@@ -54,49 +63,188 @@ Además:
 
 * Una versión **nativa** del ECPN (plantilla `Financial Report Template`) para
   imprimir desde ERPNext: `05b-estado-patrimonio-plantilla`.
+* El reporte en pantalla **Balance de Saldos (Guatemala)**: una fila por cuenta
+  con su *saldo inicial*, *debe*, *haber* y *saldo final*, con fila de totales.
+  Es el vistazo rápido para comprobar que el libro cuadra.
 * Un **Excel con todas las hojas** (estados + libros): `estados-financieros.xlsx`.
 * Un `index.html` con el resumen y enlaces a todo.
 
-Los 3 reportes dedicados (ECPN, Libro Diario y Libro Mayor) son **Query Reports**
-propios, de sólo lectura, y quedan enlazados en:
+Los 4 reportes dedicados (ECPN, Libro Diario, Libro Mayor y Balance de Saldos)
+son **Query Reports** propios, de sólo lectura, y quedan enlazados en:
 
 * la sección **Reportes** de la barra lateral de *Contabilidad*, y
 * la tarjeta **Financial Statements** del espacio **Accounting**.
+
+Se pueden **ver, imprimir y exportar a Excel/CSV directamente desde ERPNext**
+(botón **⋯ › Export** y **Imprimir**). Los **Libros Diario y Mayor** traen sus
+propios **subtotales por asiento y por cuenta** (y su fila de total general), de
+modo que no dependen de ejecutar ningún script.
+
+Todos los archivos HTML (estados y libros) usan un **diseño unificado**:
+encabezado con los datos de la empresa, tarjetas de resumen con los totales
+principales, tablas con filas de total resaltadas y, en los libros, un panel
+final con el **estado del libro** (`CUADRA` / `NO CUADRA`).
 
 ---
 
 ## 2. Requisitos
 
-* **Docker Engine** + **Docker Compose v2** (`docker compose`)
-  → <https://docs.docker.com/engine/install/>
-* El usuario debe poder ejecutar `docker` sin `sudo` (grupo `docker`).
-* ~4 GB de RAM disponibles y ~6 GB de disco.
-* Un solo puerto libre: **8080** por defecto (configurable).
+Antes de empezar necesitas **una sola cosa instalada en tu computadora: Docker**.
+
+| Qué | Detalle |
+|---|---|
+| **Docker** | Docker Desktop (Windows/macOS) o Docker Engine + Compose v2 (Linux). Es lo único que hay que instalar: incluye todo lo demás. |
+| **RAM** | ~4 GB libres (mejor 6–8 GB para trabajar cómodo). |
+| **Disco** | ~6–8 GB libres (imágenes + datos). |
+| **Puerto libre** | El **8080**. Si está ocupado, se cambia en `.env` (ver [sección 9](#9-configuración-env)). |
+| **Internet** | Sólo la primera vez, para descargar las imágenes. |
+| **Terminal** | La de tu sistema. En Windows se usa **Git Bash** o **WSL** (ver abajo). |
+
+### Instalar Docker (elige tu sistema)
+
+* **Windows 10/11** → descarga **Docker Desktop** desde
+  <https://www.docker.com/products/docker-desktop/> e instálalo. Si te pregunta,
+  acepta usar **WSL 2**. Ábrelo y espera a que diga **“Engine running”**.
+* **macOS** → descarga **Docker Desktop** desde
+  <https://www.docker.com/products/docker-desktop/> (elige *Apple Silicon* o
+  *Intel* según tu Mac), instálalo y ábrelo.
+* **Linux (Ubuntu / Debian / Fedora…)** → instala **Docker Engine + Compose v2**:
+  <https://docs.docker.com/engine/install/>
+
+> **Windows: usa una terminal tipo bash.** Los comandos de esta guía son de bash.
+> Instala [Git for Windows](https://git-scm.com/download/win) y abre **Git Bash**
+> (menú Inicio ▸ *Git Bash*), o usa **Ubuntu (WSL 2)**. En *PowerShell* o *CMD* no
+> funcionan `./install.sh` ni los demás scripts.
+
+### Comprobar que Docker quedó bien
+
+Abre la terminal y pega estos tres comandos:
+
+```bash
+docker --version
+docker compose version
+docker run --rm hello-world
+```
+
+Los tres deben responder **sin error**. El último imprime un saludo: eso confirma
+que Docker está funcionando.
+
+### Si te pide `sudo` (sólo Linux)
+
+Para no escribir `sudo` cada vez, agrega tu usuario al grupo `docker` y luego
+**cierra la sesión y vuelve a entrar** (o reinicia):
+
+```bash
+sudo usermod -aG docker "$USER"
+```
+
+Después, `docker run --rm hello-world` debe funcionar **sin** `sudo`.
 
 ---
 
-## 3. Instalación rápida
+## 3. Instalación paso a paso
+
+Sigue los pasos en orden. En cada bloque, **copia y pega** el comando en la
+terminal y pulsa **Enter**.
+
+### Paso 0 — Abre la terminal
+
+* **Windows** → **Git Bash** (menú Inicio ▸ *Git Bash*). No uses PowerShell.
+* **macOS** → **Terminal** (Aplicaciones ▸ Utilidades ▸ Terminal).
+* **Linux** → tu terminal habitual.
+
+### Paso 1 — Descarga el proyecto
+
+**Opción A — con Git (recomendado):**
 
 ```bash
-# 1) Instalar: descarga las imágenes, levanta el stack y crea el sitio (limpio)
-./install.sh
-
-# 2) Abrir el navegador en http://localhost:8080
-#    Usuario: Administrator
-#    Contraseña: la que se imprime al final de la instalación (o en .env)
-
-# 3) Ya con tu empresa creada (ver sección 4), preparar la contabilidad
-./install.sh contabilidad
-
-# 4) Opcional: generar los estados y libros como archivos en ./salidas/
-./install.sh reports
+git clone <URL-del-repositorio> erpnext-gt
+cd erpnext-gt
 ```
 
-La instalación es **idempotente**: puedes volver a ejecutar cualquier paso sin
-miedo. Nada se duplica y nunca se crean empresas ni datos de prueba.
+**Opción B — sin Git:** en la página del repositorio pulsa el botón verde
+**Code ▸ Download ZIP**, descomprime el archivo y entra a la carpeta:
 
-> Si `reports` todavía sale en ceros, es normal: un ERPNext recién instalado no
-> tiene asientos. Mira la [sección 10](#10-tu-primer-asiento-apertura-contable).
+```bash
+cd ruta/a/la/carpeta/descomprimida
+```
+
+> Truco: escribe `cd ` (con un espacio al final), **arrastra la carpeta** a la
+> ventana de la terminal —se pega la ruta sola— y pulsa Enter.
+
+### Paso 2 — (Sólo la primera vez) dale permiso de ejecución
+
+```bash
+chmod +x install.sh scripts/*.sh
+```
+
+> Si este comando diera error, no pasa nada: en los pasos siguientes usa
+> `bash install.sh` en lugar de `./install.sh`.
+
+### Paso 3 — Instala ERPNext
+
+```bash
+./install.sh
+```
+
+Descarga las imágenes, levanta los servicios y crea el sitio. **La primera vez
+tarda entre 10 y 20 minutos** (unos 5 en las siguientes). Al terminar verás algo
+así:
+
+```
+✔ ¡Instalación terminada! El sitio quedó limpio (sin empresas ni datos de prueba).
+
+ 1) Crea tu empresa con el asistente web
+    Abre http://localhost:8080 y entra como Administrator
+    Contraseña: XxXxXxXxXxXxXxXx
+```
+
+> **Anota esa contraseña.** También queda guardada en el archivo **`.env`**
+> (ábrelo con cualquier editor de texto y busca `SITE_ADMIN_PASSWORD`). Si
+> prefieres una propia, escríbela ahí **antes** de ejecutar este paso.
+
+### Paso 4 — Crea tu empresa en el navegador
+
+Abre **<http://localhost:8080>** y entra como **Administrator** con esa contraseña.
+ERPNext abre su asistente: ahí creas **tu** empresa con tus datos reales (el
+instalador no crea ninguna). Los campos importantes están en la
+[sección 4](#4-crear-tu-empresa-con-el-asistente).
+
+### Paso 5 — Prepara la contabilidad guatemalteca
+
+Cuando termines el asistente, vuelve a la terminal y ejecuta:
+
+```bash
+./install.sh contabilidad
+```
+
+Esto corrige el catálogo de Guatemala, deja el plan de cuentas en la
+**nomenclatura base**, crea tus ejercicios fiscales y agrega los reportes
+(Libro Diario, Libro Mayor, Balance de Saldos) dentro de ERPNext.
+
+### Paso 6 — (Opcional) Genera los estados y libros en archivos
+
+```bash
+./install.sh reports 2026
+```
+
+Quedan en la carpeta **`salidas/`** (HTML imprimible, CSV y un Excel). Si aparecen
+en ceros es normal: todavía no registras asientos → mira la
+[sección 10](#10-tu-primer-asiento-apertura-contable).
+
+### ¿Cómo sé que quedó bien?
+
+* `./install.sh status` muestra los servicios en estado **Up**.
+* **<http://localhost:8080>** abre el escritorio de ERPNext.
+* Dentro de ERPNext, en **Cuentas ▸ Reportes**, aparecen *Libro Diario
+  (Guatemala)*, *Libro Mayor (Guatemala)* y *Balance de Saldos (Guatemala)*.
+
+### En el día a día
+
+* **Apagar** (sin perder nada): `./install.sh stop` · **Encender**: `./install.sh up`.
+* Apagar o reiniciar la computadora **no borra nada**: los datos viven en Docker.
+* La instalación es **idempotente**: puedes repetir cualquier paso sin miedo; nada
+  se duplica y nunca se crean empresas ni datos de prueba.
 
 ---
 
@@ -124,6 +272,30 @@ Cuando termines el asistente, vuelve a la terminal y ejecuta:
 ./install.sh contabilidad
 ```
 
+> **Plan de cuentas mínimo (por defecto).** El catálogo *Guatemala - Cuentas*
+> trae cientos de cuentas. Con `ERP_MINIMAL_CHART=1` (lo normal),
+> `./install.sh contabilidad` lo reduce a la **nomenclatura base**: las 7 cuentas
+> raíz, numeradas del 1 al 7, **más sus encabezados principales** (21 cuentas en
+> total), de modo que los estados conserven su estructura sin arrastrar el resto
+> de subcuentas:
+>
+> | # | Raíz | Encabezados que conserva |
+> |---|---|---|
+> | 1 | Activos | Activo Corriente · No Corriente |
+> | 2 | Pasivos | Pasivo Corriente · Pasivo No Corriente |
+> | 3 | Patrimonio | Capital · Resultados del Ejercicio · Utilidades Retenidas |
+> | 4 | Ingresos | Productos · Servicios |
+> | 5 | Costos | Costo de Ventas · Costos Incluidos en la Valuación · Merma o Ajuste de Inventario |
+> | 6 | Gastos | *(sólo la raíz)* |
+> | 7 | Otros Gastos y Productos Financieros | Otros Gastos · Otros Ingresos |
+>
+> Así tú armas tus propias subcuentas donde las necesites. Es **seguro**: sólo se
+> aplica si la empresa todavía **no tiene asientos**; si ya registraste
+> movimientos, el plan se deja intacto. Para conservar el catálogo completo pon
+> `ERP_MINIMAL_CHART=0` en `.env` y vuelve a ejecutar `./install.sh contabilidad`
+> (antes de registrar asientos). Puedes agregar o quitar encabezados editando la
+> lista `MINIMAL_CHART_HEADERS` en `scripts/setup_accounting.py`.
+
 ---
 
 ## 5. Qué hace `./install.sh contabilidad`
@@ -140,38 +312,48 @@ empresas**: detecta la tuya y la ajusta.
    viene con naturaleza **Activo** en lugar de **Patrimonio (Equity)**. Eso
    rompería el Balance General, la sección de financiación del flujo de efectivo
    y el ECPN. El script la reclasifica (y cualquier otra raíz equivalente).
-4. **Completa lo que al catálogo le falta** y ERPNext necesita: cuenta con
-   `account_type = Equity`, depreciación acumulada, gasto por depreciación y una
-   cuenta real de redondeo; además asigna `account_type = Income Account` a las
-   cuentas de ingreso.
+4. **Deja el plan de cuentas mínimo** (con `ERP_MINIMAL_CHART=1`, por defecto):
+   borra el resto del catálogo y conserva la **nomenclatura base**: las 7 raíces
+   (`1 Activos` … `7 Otros Gastos y Productos Financieros`) **más sus encabezados**
+   (Activo Corriente, No Corriente, Pasivo Corriente/No Corriente, Capital,
+   Resultados del Ejercicio, Utilidades Retenidas, Productos, Servicios, Costo de
+   Ventas, Costos Incluidos en la Valuación, Merma o Ajuste de Inventario, Otros
+   Gastos y Otros Ingresos), 21 cuentas en total, de modo que tú armes tus
+   propias subcuentas. Sólo se aplica si la empresa no tiene asientos.
+   Con `ERP_MINIMAL_CHART=0` en su lugar **completa el catálogo** con lo que le
+   falta y ERPNext necesita: cuenta con `account_type = Equity`, depreciación
+   acumulada, gasto por depreciación, cuenta real de redondeo y
+   `account_type = Income Account` en los ingresos.
 5. **Asigna Account Categories** (el motor NIIF de v16) a las cuentas por reglas,
-   para que también funcionen las plantillas NIIF.
+   para que también funcionen las plantillas NIIF *(sólo con el catálogo completo)*.
 6. **Fija los valores por defecto de la empresa** (ingresos, gastos, por cobrar,
    por pagar, banco/efectivo, redondeo) y aplica `ERP_PERPETUAL_INVENTORY`.
 7. **Crea los años fiscales** indicados en `FISCAL_YEARS`.
 8. **Crea / actualiza la plantilla** `Financial Report Template` del **ECPN
    (NIC 1)**.
-9. **Crea los 3 reportes propios** y los enlaza en la barra lateral y el espacio
-   de Contabilidad.
-10. **Verifica** que todos los reportes existan (8 en total).
+9. **Crea los 4 reportes propios** (ECPN, Libro Diario, Libro Mayor y Balance de
+   Saldos) y los enlaza en la barra lateral y el espacio de Contabilidad.
+10. **Verifica** que todos los reportes existan (9 en total).
 
 Si lo ejecutas **antes** de crear tu empresa, no falla: crea la plantilla y los
 reportes (que sirven para cualquier empresa) y te recuerda qué falta.
 
-Salida típica:
+Salida típica (con el plan mínimo):
 
 ```
 Sitio: frontend
 País: Guatemala · Moneda: GTQ
+Plan de cuentas: nomenclatura base de Guatemala (raíces 1 a 7 + encabezados)
 · Empresa: AtiTur, R.L.
   · Datos maestros de ERPNext: ya estaban listos
   ✔ 'Patrimonio' marcada como Patrimonio (Equity)
-  ✔ Categorías NIIF asignadas a 50 cuentas
-  · Valores por defecto de la empresa: enable_perpetual_inventory
+  · Valores por defecto de cuenta liberados (14 campos)
+  · Plan de cuentas reducido a la nomenclatura base (21 cuentas = 7 raíces + encabezados; 100 eliminadas)
   + Año fiscal 2025 (2025-01-01 → 2025-12-31)
 · Reporte creado: Libro Diario (Guatemala)
 · Reporte creado: Libro Mayor (Guatemala)
-· 8 reportes verificados correctamente
+· Reporte creado: Balance de Saldos (Guatemala)
+· 9 reportes verificados correctamente
 ERP_ACCOUNTING_SETUP_OK company_configured
 ```
 
@@ -179,17 +361,39 @@ ERP_ACCOUNTING_SETUP_OK company_configured
 
 ## 6. Libro Diario y Libro Mayor (formato Guatemala)
 
-Se generan **en pantalla** (reportes de ERPNext) y **como archivo** (HTML
+Se ven **dentro de ERPNext** (Cuentas › Reportes › *Libro Diario (Guatemala)* /
+*Libro Mayor (Guatemala)*) y también se pueden generar **como archivo** (HTML
 imprimible + CSV), en orden cronológico y en GTQ.
 
 * **Libro Diario** — registro cronológico de las **partidas (asientos)**. Cada
   partida lleva su **folio**, la fecha, el documento de origen (`Journal Entry`,
-  factura, etc.) y sus cuentas al **Debe** y al **Haber**, con la leyenda
-  **«Sumas iguales»** al pie de cada asiento y los totales del período al final
-  (con el cuadre *Debe − Haber*, que debe ser `0.00`).
+  factura, etc.) y sus cuentas al **Debe** y al **Haber**. Al pie de **cada
+  asiento** aparece su fila **«Sumas iguales asiento N»** (el subtotal *Debe =
+  Haber* de ese asiento), y al final la fila **«TOTAL DEL PERÍODO»** con la suma
+  de todas las partidas (el cuadre *Debe − Haber*, que debe ser `0.00`). Esas
+  filas las calcula la propia consulta, así que se ven igual en pantalla, al
+  imprimir y al exportar.
 * **Libro Mayor** — el **traslado** de esas partidas a cada cuenta, en orden de
-  código, con **saldo inicial**, movimientos y **saldo corriente** (débito
-  positivo).
+  código. Cada cuenta se abre con su fila **«Saldo inicial»**, siguen sus
+  movimientos con el **saldo corriente** (débito positivo) y cierra con la fila
+  **«Suma del período»** (total *Debe*, total *Haber* y **saldo final** de esa
+  cuenta). Al pie, **«TOTAL GENERAL»** suma los saldos finales: debe dar `0.00`
+  si el libro cuadra. El archivo añade además un panel **Balance de saldos** y el
+  **estado del libro** (`CUADRA` / `NO CUADRA`).
+* **Balance de Saldos (Guatemala)** — reporte propio, una fila por cuenta con su
+  *saldo inicial*, *debe*, *haber* y *saldo final*, con fila de **totales**. Es
+  la vista rápida para comprobar que el libro cuadra: el total del Debe debe
+  igualar al del Haber y la suma de los saldos finales debe dar `0.00`.
+
+**Ver, imprimir y exportar desde ERPNext (sin ejecutar ningún script).** Abre el
+reporte, ajusta **Empresa / Desde / Hasta** y usa la barra de la derecha:
+
+* **⋯ › Export** → descarga el reporte en **Excel** o **CSV** tal como se ve.
+* **Imprimir** (o `Ctrl+P`) → vista de impresión lista para **PDF**.
+
+Las filas de subtotal y de total van en **negrita** para que resalten. No hace
+falta usar `./scripts/estados-financieros.sh`; ese atajo sólo sirve para dejar
+copias `HTML`/`XLSX` en `./salidas/` con el diseño «bonito» del reporte.
 
 Detalles:
 
@@ -198,6 +402,7 @@ Detalles:
 * URLs directas:
   * `http://localhost:8080/app/query-report/Libro%20Diario%20(Guatemala)`
   * `http://localhost:8080/app/query-report/Libro%20Mayor%20(Guatemala)`
+  * `http://localhost:8080/app/query-report/Balance%20de%20Saldos%20(Guatemala)`
   * `http://localhost:8080/app/query-report/Estado%20de%20Cambios%20en%20el%20Patrimonio%20Neto`
 
 > **Folios.** El folio empieza en 1. Para continuar la numeración de un libro ya
@@ -227,11 +432,15 @@ salidas/
 ├── 05b-estado-patrimonio-plantilla...  # versión nativa del ECPN
 ├── 06-libro-diario.html / .csv
 ├── 07-libro-mayor.html / .csv
-├── estados-financieros.xlsx            # todas las hojas en un Excel
+├── estados-financieros.xlsx            # todas las hojas + «Resumen y cuadre»
 └── salida-<año>.txt                    # log de la generación
 ```
 
-Los `.html` se imprimen a PDF con `Ctrl+P` desde el navegador.
+Todos los `.html` comparten el mismo **diseño** (encabezado con los datos de la
+empresa, tarjetas de totales y filas de total resaltadas) y se imprimen a PDF con
+`Ctrl+P` desde el navegador. El Excel incluye una hoja **«Resumen y cuadre»** con
+los totales de control (Balance General, resultado, cuadre del libro, diferencia
+del Libro Diario y suma de saldos finales del Libro Mayor).
 
 ---
 
@@ -278,6 +487,7 @@ editarlo cuando quieras: las variables de contabilidad se leen al ejecutar
 | `COMPANY_NAME` | *(vacío)* | **Déjalo vacío**: se detecta la empresa del sitio. Sólo llénalo si tienes varias empresas. |
 | `COMPANY_ABBR` | *(vacío)* | Sólo aplica junto con `COMPANY_NAME`. |
 | `ERP_PERPETUAL_INVENTORY` | `0` | `0` apaga el inventario perpetuo (recomendado al empezar), `1` lo enciende. |
+| `ERP_MINIMAL_CHART` | `1` | `1` conserva la **nomenclatura base** (7 raíces 1…7 + sus encabezados, 21 cuentas) y borra el resto de subcuentas; `0` conserva el catálogo completo *Guatemala - Cuentas*. |
 | `FISCAL_YEAR_START_MONTH` | `1` | Mes de inicio del ejercicio (1 = enero). |
 | `FISCAL_YEARS` | `2025,2026,2027` | Ejercicios fiscales que se crean. |
 | `LD_FOLIO_INICIO` | *(vacío → 1)* | Primer folio del **Libro Diario**. |
@@ -292,8 +502,17 @@ Consulta la configuración efectiva con `./install.sh env`.
 
 ## 10. Tu primer asiento: apertura contable
 
-Para que los estados dejen de salir en ceros, registra tu **asiento de apertura**
-con los saldos con los que arrancas:
+Con el **plan de cuentas mínimo** el sitio arranca con la nomenclatura base (las
+7 raíces y sus encabezados: Activo Corriente, Pasivo No Corriente, Capital,
+Productos, Costo de Ventas, etc.). Antes de registrar movimientos, crea las
+subcuentas que necesites como hijas de esos encabezados: **Contabilidad › Plan de
+cuentas**, elige la cuenta (p. ej. `Activo Corriente`) y pulsa **Add Child** (una
+cuenta como `1101 Caja`). Para que los estados salgan con datos, aparte de la
+cuenta de resultados también conviene definir las **cuentas por defecto de la
+empresa** (*Company › Default Accounts*: por cobrar, por pagar, banco/efectivo,
+ingresos y gastos).
+
+Luego registra tu **asiento de apertura** con los saldos con los que arrancas:
 
 1. **Contabilidad › Journal Entry › New**.
 2. Fecha: el inicio de tu ejercicio.
@@ -313,11 +532,14 @@ Después, en cada período:
 ./install.sh reports 2026
 ```
 
-y revisa `salidas/06-libro-diario.html` (partidas con folio y «sumas iguales») y
-`salidas/07-libro-mayor.html` (saldos por cuenta).
+y revisa `salidas/06-libro-diario.html` (partidas con folio y «sumas iguales»),
+`salidas/07-libro-mayor.html` (balance de saldos y **saldo final** por cuenta, con
+el estado `CUADRA` / `NO CUADRA`) y el reporte en pantalla **Balance de Saldos
+(Guatemala)**.
 
-Si el total de *Debe − Haber* del Libro Diario no es `0.00`, hay un asiento
-descuadrado: revisa el Balance Financiero (Balanza de Comprobación).
+Si el total de *Debe − Haber* del Libro Diario no es `0.00`, o la suma de los
+saldos finales del Libro Mayor no da `0.00`, hay un asiento descuadrado: revisa el
+Balance Financiero (Balanza de Comprobación).
 
 ---
 
@@ -372,17 +594,24 @@ proyecto. Tu máquina no conserva nada de ERPNext.
 ## 13. Instalarlo en otra computadora
 
 El proyecto está pensado para **clonarse y correr en cualquier máquina** sin
-arrastrar datos de otra instalación (cada quien crea su empresa).
+arrastrar datos de otra instalación (cada quien crea su empresa). Los pasos son
+**exactamente los mismos** de la [sección 3](#3-instalación-paso-a-paso); en
+resumen:
 
 ```bash
 git clone <URL-del-repositorio> erpnext-gt
 cd erpnext-gt
+chmod +x install.sh scripts/*.sh
 
-./install.sh                 # sitio limpio
-# ... crea tu empresa en el navegador ...
-./install.sh contabilidad
-./install.sh reports
+./install.sh                 # 1) deja el sitio limpio funcionando
+# 2) crea tu empresa en el navegador (http://localhost:8080)
+./install.sh contabilidad    # 3) prepara la contabilidad guatemalteca
+./install.sh reports 2026    # 4) (opcional) estados y libros en ./salidas/
 ```
+
+> La otra computadora también necesita **Docker instalado** (ver
+> [sección 2](#2-requisitos)). Si el **puerto 8080** ya está ocupado ahí, cámbialo
+> en `.env` (`HTTP_PORT=8081`) antes de ejecutar `./install.sh`.
 
 El archivo `.env` **no viene** en el repositorio (está en `.gitignore`): el
 instalador lo crea solo a partir de `.env.example`, generando contraseñas nuevas
@@ -447,15 +676,44 @@ Servicios del stack: `configurator`, `create-site`, `backend`, `frontend`
 
 ## 15. Solución de problemas
 
-* **El puerto 8080 está ocupado** → cambia `HTTP_PORT` en `.env` y ejecuta
-  `./install.sh up`.
+**Errores típicos de la primera vez**
+
+* **`docker: command not found`** → Docker no está instalado (o la terminal se
+  abrió antes de instalarlo). Cierra y vuelve a abrir la terminal. Si sigue,
+  instálalo (sección [2](#2-requisitos)).
+* **`Cannot connect to the Docker daemon`** → Docker está instalado pero **no está
+  corriendo**. Abre **Docker Desktop** (Windows/macOS) y espera a *“Engine
+  running”*, o en Linux: `sudo systemctl start docker`.
+* **`permission denied ... ./install.sh`** → dale permiso de ejecución
+  (`chmod +x install.sh scripts/*.sh`) o ejecútalo con `bash install.sh`.
+* **`./install.sh: No such file or directory`** → no estás en la carpeta del
+  proyecto. Entra con `cd ruta/a/la/carpeta` (paso 1) y verifica con `ls` que
+  aparezca `install.sh`.
+* **`./install.sh` no hace nada en Windows** → estás en *PowerShell* o *CMD*. Usa
+  **Git Bash** o **Ubuntu (WSL)** (sección [2](#2-requisitos)).
+* **`No se encontró 'docker compose'`** → te falta el plugin *Compose v2*;
+  actualiza Docker Desktop / reinstala Docker Engine reciente.
+
+**Durante o después de la instalación**
+
+* **El puerto 8080 está ocupado** → cambia `HTTP_PORT` en `.env` (p. ej.
+  `HTTP_PORT=8081`) y ejecuta `./install.sh up`; la URL pasa a ser
+  `http://localhost:8081`.
 * **"El sitio no responde"** → revisa los logs: `./install.sh logs create-site`
   o `./install.sh logs backend`.
+* **Agregué los reportes pero no aparecen** → haz *recarga forzada* en el
+  navegador (`Ctrl + Shift + R`).
 * **Los estados salen en ceros** → es normal si aún no registras asientos.
   Empieza con un asiento de apertura (sección 10).
 * **No aparecen los reportes *Libro Diario (Guatemala)* / *Libro Mayor (Guatemala)***
   → todavía no ejecutaste `./install.sh contabilidad`. Recuerda hacer *recarga
   forzada* en el navegador (`Ctrl + Shift + R`).
+* **¿Cómo imprimo o exporto un libro a Excel sin usar la terminal?** → abre el
+  reporte en ERPNext (Cuentas › Reportes), ajusta *Desde/Hasta* y usa **⋯ ›
+  Export** (Excel/CSV) o **Imprimir** (`Ctrl+P`). Las filas de subtotal por
+  asiento/cuenta y la de total general ya vienen incluidas. Si actualizaste el
+  proyecto, vuelve a ejecutar `./install.sh contabilidad` para refrescar los
+  reportes.
 * **`reports` dice que no hay ninguna empresa** → crea tu empresa con el
   asistente web y luego ejecuta `./install.sh contabilidad`.
 * **`Could not find Warehouse Type: Transit`** al crear la empresa → ejecuta
@@ -486,8 +744,11 @@ Servicios del stack: `configurator`, `create-site`, `backend`, `frontend`
   plantilla nativa del ECPN.
 * El **Libro Diario** y el **Libro Mayor** se construyen directamente desde los
   asientos contables (*GL Entry*), con las columnas que se usan en Guatemala
-  (folio, partida, Debe, Haber, «sumas iguales»). La numeración de folios es
-  consecutiva dentro del período; para un libro legalizado puedes ajustar el
-  inicio con `LD_FOLIO_INICIO` y exportar a PDF (Ctrl+P) o a Excel/CSV.
+  (folio, partida, Debe, Haber, «sumas iguales»). En pantalla incluyen los
+  subtotales **por asiento** (Diario) y **por cuenta** (Mayor) más el total del
+  período, y se pueden imprimir o exportar a Excel/CSV desde ERPNext. Para el
+  archivo con el diseño «bonito» puedes usar `./install.sh reports`. La
+  numeración de folios es consecutiva dentro del período; para un libro
+  legalizado puedes ajustar el inicio con `LD_FOLIO_INICIO`.
 * El proyecto **no crea empresas ni datos de ejemplo**, y **no incluye**
   facturación electrónica (FEL) ni regímenes fiscales específicos.
