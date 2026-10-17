@@ -150,6 +150,7 @@ ensure_env() {
   v="$(env_get CURRENCY)";               [ -n "$v" ] || env_set CURRENCY "GTQ"
   v="$(env_get FISCAL_YEARS)";           [ -n "$v" ] || env_set FISCAL_YEARS "$(date +%Y)"
   v="$(env_get ERP_PERPETUAL_INVENTORY)"; [ -n "$v" ] || env_set ERP_PERPETUAL_INVENTORY "0"
+  v="$(env_get ERP_MINIMAL_CHART)";     [ -n "$v" ] || env_set ERP_MINIMAL_CHART "1"
 }
 
 load_config() {
@@ -160,6 +161,7 @@ load_config() {
   COMPANY_NAME="$(env_get COMPANY_NAME)"
   COMPANY_ABBR="$(env_get COMPANY_ABBR)"
   PERPETUAL_INVENTORY="$(env_get ERP_PERPETUAL_INVENTORY)"; PERPETUAL_INVENTORY="${PERPETUAL_INVENTORY:-0}"
+  MINIMAL_CHART="$(env_get ERP_MINIMAL_CHART)"; MINIMAL_CHART="${MINIMAL_CHART:-1}"
   COUNTRY="$(env_get COUNTRY)"
   CURRENCY="$(env_get CURRENCY)"
   FISCAL_YEAR_START_MONTH="$(env_get FISCAL_YEAR_START_MONTH)"; FISCAL_YEAR_START_MONTH="${FISCAL_YEAR_START_MONTH:-1}"
@@ -341,6 +343,7 @@ cmd_env() {
   printf 'CURRENCY         = %s\n' "$CURRENCY"
   printf 'FISCAL_YEARS     = %s\n' "$FISCAL_YEARS"
   printf 'INV. PERPETUO    = %s\n' "$PERPETUAL_INVENTORY"
+  printf 'PLAN MÍNIMO      = %s\n' "$MINIMAL_CHART"
   printf 'ADMIN_PASSWORD   = %s\n' "$SITE_ADMIN_PASSWORD"
   hr
   printf 'Archivo: %s\n' "$ENV_FILE"
@@ -357,7 +360,8 @@ cmd_contabilidad() {
     "ERP_CURRENCY=$CURRENCY" \
     "ERP_FY_START_MONTH=$FISCAL_YEAR_START_MONTH" \
     "ERP_FISCAL_YEARS=$FISCAL_YEARS" \
-    "ERP_PERPETUAL_INVENTORY=$PERPETUAL_INVENTORY"
+    "ERP_PERPETUAL_INVENTORY=$PERPETUAL_INVENTORY" \
+    "ERP_MINIMAL_CHART=$MINIMAL_CHART"
   ok "Contabilidad lista."
   printf '%s\n' "   ${C_DIM}Reportes en: Cuentas > Reportes (barra lateral), y en la tarjeta Financial Statements.${C_RESET}"
 }
