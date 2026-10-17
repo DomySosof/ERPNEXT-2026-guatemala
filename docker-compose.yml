@@ -1,0 +1,187 @@
+# =============================================================================
+#  ERPNext v16 en Docker  (stack de un solo servidor)
+#  Basado en la plantilla oficial de frappe_docker (compose.yaml / pwd.yml).
+#  Nada se instala en el host: todo vive en contenedores y volúmenes Docker.
+#
+#  Uso:  ./install.sh          (ver README.md)
+# =============================================================================
+
+x-erpnext-image: &erpnext_image
+  image: ${CUSTOM_IMAGE:-frappe/erpnext}:${ERPNEXT_VERSION:-v16.51.1}
+  restart: ${RESTART_POLICY:-unless-stopped}
+
+x-depends-on-configurator: &depends_on_configurator
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
+
+x-backend-defaults: &backend_defaults
+  <<: [*erpnext_image, *depends_on_configurator]
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+    - logs:/home/frappe/frappe-bench/logs
+
+services:
+  # ---------------------------------------------------------------------------
+  # Configura los enlaces (DB / Redis) en sites/common_site_config.json
+  # ---------------------------------------------------------------------------
+  configurator:
+    <<: *erpnext_image
+    restart: "no"
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host $$DB_HOST;
+        bench set-config -gp db_port $$DB_PORT;
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+        bench set-config -g chromium_path /usr/lib/chromium/chromium-headless-shell;
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+      SOCKETIO_PORT: "9000"
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+
+  # ---------------------------------------------------------------------------
+  # Crea el sitio la primera vez (idempotente: si ya existe, no hace nada)
+  # ---------------------------------------------------------------------------
+  create-site:
+    <<: *erpnext_image
+    restart: "no"
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        wait-for-it -t 120 db:3306;
+        wait-for-it -t 120 redis-cache:6379;
+        wait-for-it -t 120 redis-queue:6379;
+        export start=`date +%s`;
+        if [ -f "sites/${SITE_NAME}/site_config.json" ]; then
+          echo "El sitio ${SITE_NAME} ya existe, se omite la creación";
+          exit 0;
+        fi;
+        echo "Creando el sitio ${SITE_NAME} ...";
+        bench new-site --mariadb-user-host-login-scope='%' --admin-password='${SITE_ADMIN_PASSWORD}' --db-root-username=root --db-root-password='${DB_ROOT_PASSWORD}' --install-app erpnext --set-default ${SITE_NAME};
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Aplicación (gunicorn)
+  # ---------------------------------------------------------------------------
+  backend:
+    <<: *backend_defaults
+    environment:
+      GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+
+  # ---------------------------------------------------------------------------
+  # Nginx (único punto de entrada HTTP)
+  # ---------------------------------------------------------------------------
+  frontend:
+    <<: *erpnext_image
+    command: ["nginx-entrypoint.sh"]
+    environment:
+      BACKEND: backend:8000
+      SOCKETIO: websocket:9000
+      NGINX_LISTEN_PORT: "8080"
+      FRAPPE_SITE_NAME_HEADER: ${SITE_NAME}
+      UPSTREAM_REAL_IP_ADDRESS: ${UPSTREAM_REAL_IP_ADDRESS:-127.0.0.1}
+      UPSTREAM_REAL_IP_HEADER: ${UPSTREAM_REAL_IP_HEADER:-X-Forwarded-For}
+      UPSTREAM_REAL_IP_RECURSIVE: ${UPSTREAM_REAL_IP_RECURSIVE:-off}
+      PROXY_READ_TIMEOUT: ${PROXY_READ_TIMEOUT:-120}
+      CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-50m}
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+    depends_on:
+      - backend
+      - websocket
+
+  # ---------------------------------------------------------------------------
+  # Websockets (notificaciones en tiempo real)
+  # ---------------------------------------------------------------------------
+  websocket:
+    <<: *backend_defaults
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+
+  # ---------------------------------------------------------------------------
+  # Workers de colas y planificador
+  # ---------------------------------------------------------------------------
+  queue-short:
+    <<: *backend_defaults
+    command: ["bench", "worker", "--queue", "short,default"]
+
+  queue-long:
+    <<: *backend_defaults
+    command: ["bench", "worker", "--queue", "long,default,short"]
+
+  scheduler:
+    <<: *backend_defaults
+    command: ["bench", "schedule"]
+
+  # ---------------------------------------------------------------------------
+  # Redis (caché + colas)
+  # ---------------------------------------------------------------------------
+  redis-cache:
+    image: redis:6.2-alpine
+    restart: ${RESTART_POLICY:-unless-stopped}
+
+  redis-queue:
+    image: redis:6.2-alpine
+    restart: ${RESTART_POLICY:-unless-stopped}
+    volumes:
+      - redis-queue-data:/data
+
+  # ---------------------------------------------------------------------------
+  # MariaDB
+  # ---------------------------------------------------------------------------
+  db:
+    image: mariadb:11.8
+    restart: ${RESTART_POLICY:-unless-stopped}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --innodb-buffer-pool-size=${DB_BUFFER_POOL:-512M}
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 10s
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - db-data:/var/lib/mysql
+
+volumes:
+  sites:
+  logs:
+  db-data:
+  redis-queue-data:
+
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-erpnext}_network
+    driver: bridge
